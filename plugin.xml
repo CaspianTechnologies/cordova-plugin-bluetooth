@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<plugin id="cordova-plugin-bluetooth" version="0.0.1" xmlns="http://apache.org/cordova/ns/plugins/1.0" xmlns:android="http://schemas.android.com/apk/res/android">
+    <name>Bluetooth</name>
+    <description>Bluetooth simple plugin</description>
+    <js-module name="Bluetooth" src="www/Bluetooth.js">
+        <clobbers target="cordova.plugins.bluetooth" />
+    </js-module>
+    <hook type="after_plugin_add" src="hooks/after_plugin_add.js" />
+    <platform name="browser">
+        <config-file target="config.xml" parent="/*">
+            <feature name="Bluetooth">
+                <param name="browser-package" value="Bluetooth" />
+            </feature>
+        </config-file>
+
+        <js-module src="src/browser/BluetoothProxy.js" name="BluetoothProxy">
+            <runs />
+        </js-module>
+    </platform>
+	<platform name="android">
+		<config-file target="config.xml" parent="/*">
+			<feature name="Bluetooth">
+				<param name="android-package" value="capital.spatium.plugin.Bluetooth" />
+			</feature>
+		</config-file>
+        <source-file src="src/android/capital/spatium/plugin/Bluetooth.java" target-dir="src/capital/spatium/plugin" />
+	</platform>
+</plugin>
