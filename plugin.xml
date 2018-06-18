@@ -17,11 +17,42 @@
             <runs />
         </js-module>
     </platform>
+    <platform name="windows">
+        <config-file target="package.appxmanifest" parent="/Package/Capabilities" versions="<10.0.0">
+            <m2:DeviceCapability Name="bluetooth.rfcomm">
+                <m2:Device Id="any">
+                    <m2:Function Type="serviceId:995f40e0-ce68-4d24-8f68-f49d2b9d661f"/>
+                </m2:Device>
+             </m2:DeviceCapability>
+        </config-file>
+        <config-file target="package.appxmanifest" parent="/Package/Capabilities" versions=">=10.0.0">
+            <DeviceCapability Name="bluetooth.rfcomm">
+                <Device Id="any">
+                    <Function Type="serviceId:995f40e0-ce68-4d24-8f68-f49d2b9d661f"/>
+                </Device>
+             </DeviceCapability>
+        </config-file>
+        <config-file target="config.xml" parent="/*">
+            <feature name="Bluetooth">
+                <param name="windows-package" value="Bluetooth" />
+            </feature>
+        </config-file>
+
+        <js-module src="src/windows/BluetoothProxy.js" name="BluetoothProxy">
+            <merges target="" />
+        </js-module>
+    </platform>
 	<platform name="android">
 		<config-file target="config.xml" parent="/*">
 			<feature name="Bluetooth">
 				<param name="android-package" value="capital.spatium.plugin.Bluetooth" />
 			</feature>
+		</config-file>
+
+		<config-file target="AndroidManifest.xml" parent="/*">
+			<uses-permission android:name="android.permission.BLUETOOTH" />
+			<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+			<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 		</config-file>
         <source-file src="src/android/capital/spatium/plugin/Bluetooth.java" target-dir="src/capital/spatium/plugin" />
 	</platform>
