@@ -110,8 +110,14 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("getReading".equals(action)) {
       getReading(callbackContext);
       return true;
+    } else if ("requestEnable".equals(action)) {
+      requestEnable(callbackContext);
+      return true;
     } else if ("enable".equals(action)) {
       enable(callbackContext);
+      return true;
+    } else if ("disable".equals(action)) {
+      disable(callbackContext);
       return true;
     } else if ("listPairedDevices".equals(action)) {
       listPairedDevices(callbackContext);
@@ -584,7 +590,7 @@ public class Bluetooth extends CordovaPlugin {
     callbackContext.success();
   }
 
-  private void enable(final CallbackContext callbackContext) {
+  private void requestEnable(final CallbackContext callbackContext) {
     if(mBluetoothAdapter == null) {
       callbackContext.error("Bluetooth is not supported");
       return;
@@ -592,6 +598,26 @@ public class Bluetooth extends CordovaPlugin {
 
     cordova.getActivity().startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
     callbackContext.success();
+  }
+
+  private void enable(final CallbackContext callbackContext) {
+    if(mBluetoothAdapter == null) {
+      callbackContext.error("Bluetooth is not supported");
+      return;
+    }
+
+    mBluetoothAdapter.enable();
+    callbackContext.success();
+  }
+
+  private void disable(final CallbackContext callbackContext) {
+    if(mBluetoothAdapter == null) {
+      callbackContext.error("Bluetooth is not supported");
+      return;
+    }
+  
+    mBluetoothAdapter.disable();
+  	callbackContext.success();
   }
 
   @Override

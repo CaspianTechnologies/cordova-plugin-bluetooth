@@ -350,7 +350,19 @@
     getConnected: function (successCallback, errorCallback, params) {
       successCallback(!!_socket)
     },
+	requestEnable: function (successCallback, errorCallback, params) {
+      if (_bluetoothAdapter) {
+        Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
+        successCallback()
+      }
+    },
     enable: function (successCallback, errorCallback, params) {
+      if (_bluetoothAdapter) {
+        Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
+        successCallback()
+      }
+    },
+	disable: function (successCallback, errorCallback, params) {
       if (_bluetoothAdapter) {
         Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
         successCallback()

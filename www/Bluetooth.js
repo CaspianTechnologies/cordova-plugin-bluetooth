@@ -36,10 +36,22 @@ exports.getReading = function() {
   });
 };
 
+exports.requestEnable = function() {
+    return new Promise(function(success,error) {
+        exec(success, error, "Bluetooth", "requestEnable", []);
+    });
+};
+
 exports.enable = function() {
   return new Promise(function(success,error) {
     exec(success, error, "Bluetooth", "enable", []);
   });
+};
+
+exports.disable = function() {
+    return new Promise(function(success,error) {
+        exec(success, error, "Bluetooth", "disable", []);
+    });
 };
 
 exports.listPairedDevices = function() {
