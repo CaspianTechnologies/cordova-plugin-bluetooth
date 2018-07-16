@@ -29,6 +29,7 @@
   var _discoveryCallback
   var _discoveredCallback
   var _discoverableCallback
+  var _listeningCallback
 
   var ANDROID_STATE_OFF = 0x0000000a
   var ANDROID_STATE_TURNING_ON = 0x0000000b
@@ -50,25 +51,16 @@
   _watcher.addEventListener("stopped", onStopped)
 
   function onAdded(devinfo) {
-    //Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(devinfo.id)
-    //  .then((device) => {
-    //    let doesSupportService = !!device.rfcommServices.reduce((count, service) => { return SERVICE_UUID.includes(service.serviceId.uuid) ? count + 1 : count }, 0)
-        
-    //    if (doesSupportService && _discoveredCallback) {
-    //      _discoveredCallback({ name: devinfo.name ? devinfo.name : 'Communications device', address: devinfo.id }, { keepCallback: true })
-    //    }
-    //  })
-
     if (_discoveredCallback) {
       _discoveredCallback({ name: devinfo.name ? devinfo.name : 'Communications device', address: devinfo.id }, { keepCallback: true })
     }
 
-    console.log("<p>Device added: " + devinfo.name + "</p>")
+    console.log('Device added: ' + devinfo.name)
     _deviceArray.push(devinfo)
   }
 
   function onUpdated(devUpdate) {
-    console.log(`<p>Device updated. ID: ${devUpdate.id} and ${devUpdate.name} "</p>`)
+    console.log('Device updated. ID: ${devUpdate.id} and ${devUpdate.name}')
     for (var i = 0; i < _deviceArray.length; i++) {
       if (_deviceArray[i].id == devUpdate.id) {
         _deviceArray[i].update(devUpdate)
@@ -76,13 +68,13 @@
         if (_discoveredCallback) {
           _discoveredCallback({ name: _deviceArray[i].name ? _deviceArray[i].name : 'Communications device', address: _deviceArray[i].id }, { keepCallback: true })
         }
-        console.log(`<p>Device updated. name:  ${_deviceArray[i].name} "</p>`)
+        console.log('Device updated. name:  ${_deviceArray[i].name}')
       }
     }
   }
 
   function onRemoved(devUpdate) {
-    console.log(`<p>Device removed. ID: ${devUpdate.id} "</p>`);
+    console.log('Device removed. ID: ${devUpdate.id}');
     for (var i = 0; i < _deviceArray.length; i++) {
       if (_deviceArray[i].id == devUpdate.id) {
         _deviceArray.splice(i, 1)
@@ -92,12 +84,12 @@
 
   function onEnumerationCompleted(obj) {
     _watcher.stop()
-    console.log("<p>Enumeration Completed.</p>")
+    console.log('Enumeration Completed')
   }
 
   function onStopped(obj) {
     _discoveryCallback(false, { keepCallback: true })
-    console.log("<p>Stopped.</p>")
+    console.log('Stopped.')
   }
 
   function adapterStateChanged(result) {
@@ -128,7 +120,7 @@
       actualStringLength = await reader.loadAsync(BYTES_TO_READ)
       if (actualStringLength < BYTES_TO_READ) {
         disconnect()
-        console.log("Client disconnected.")
+        console.log('Client disconnected.')
         if (_connectedCallback) {
           _connectedCallback(null, { keepCallback: true, status: cordova.callbackStatus.ERROR })
         }
@@ -316,14 +308,6 @@
   }
 
   cordova.commandProxy.add("Bluetooth", {
-    // echo: function(successCallback,errorCallback,strInput) {
-    //     if(!strInput || !strInput.length) {
-    //         errorCallback("Error, something was wrong with the input string. =>" + strInput)
-    //     }
-    //     else {
-    //         successCallback(strInput + " echo!")
-    //     }
-    // },
     getSupported: function (successCallback, errorCallback, params) {
       Windows.Devices.Radios.Radio.getRadiosAsync()
         .done(function (radios) {
@@ -501,5 +485,8 @@
     },
     setStateCallback: function (successCallback, errorCallback, params) {
       _stateCallback = successCallback
+    },
+    setListeningCallback: function (successCallback, errorCallback, params) {
+      _listeningCallback = successCallback
     }
   })

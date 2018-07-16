@@ -42,6 +42,7 @@ public class Bluetooth extends CordovaPlugin {
   private CallbackContext mDiscoveryCallback = null;
   private CallbackContext mDiscoverableCallback = null;
   private CallbackContext mConnectedCallback = null;
+  private CallbackContext mListeningCallback = null;
 
   private CallbackContext mMessageCallback = null;
 
@@ -155,6 +156,9 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("setStateCallback".equals(action)) {
       setStateCallback(callbackContext);
       return true;
+    } else if ("setListeningCallback".equals(action)) {
+      setListeningCallback(callbackContext);
+      return true;
     } else if ("connect".equals(action)) {
       String device;
       String address;
@@ -232,6 +236,10 @@ public class Bluetooth extends CordovaPlugin {
       };
       webView.getContext().registerReceiver(mStateReceiver, new IntentFilter(ACTION_STATE_CHANGED));
     }
+  }
+
+  private void setListeningCallback(CallbackContext callbackContext) {
+    mListeningCallback = callbackContext;
   }
 
   private void setDiscoveryCallback(CallbackContext callbackContext) {
@@ -391,23 +399,31 @@ public class Bluetooth extends CordovaPlugin {
       return;
     }
 
+    if(mListening) {
+      callbackContext.error("Already listening");
+      return;
+    }
+
     cordova.getThreadPool().execute(new Runnable() {
       public void run() {
         try {
           mBluetoothServerSocket = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Spatium wallet", UUID.fromString("995f40e0-ce68-4d24-8f68-f49d2b9d661f"));
 
           mListening = true;
-          while (mBluetoothSocket == null && mListening) {
-            try {
-              BluetoothSocket socket = mBluetoothServerSocket.accept(500);
-              if(mBluetoothSocket == null) {
-                mBufferedReader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-                mPrintWriter = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
-                mBluetoothSocket = socket;
-              } else {
-                socket.close();
-              }
-            } catch (Exception ignored) {}
+
+          if (mListeningCallback != null) {
+            PluginResult result = new PluginResult(PluginResult.Status.OK, true);
+            result.setKeepCallback(true);
+            mListeningCallback.sendPluginResult(result);
+          }
+
+          BluetoothSocket socket = mBluetoothServerSocket.accept();
+          if (mBluetoothSocket == null) {
+            mBufferedReader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
+            mPrintWriter = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
+            mBluetoothSocket = socket;
+          } else {
+            socket.close();
           }
 
           if(mBluetoothSocket != null && mConnectedCallback != null) {
@@ -424,11 +440,21 @@ public class Bluetooth extends CordovaPlugin {
         } catch (Exception e) {
           callbackContext.error("Listening failed");
         } finally {
-          try {
-            mBluetoothServerSocket.close();
-          } catch (Exception ignored) {}
-          mBluetoothServerSocket = null;
+          if (mBluetoothServerSocket != null) {
+            try {
+              mBluetoothServerSocket.close();
+            } catch (Exception ignored) {}
+
+            mBluetoothServerSocket = null;
+          }
+
           mListening = false;
+
+          if (mListeningCallback != null) {
+            PluginResult result = new PluginResult(PluginResult.Status.OK, false);
+            result.setKeepCallback(true);
+            mListeningCallback.sendPluginResult(result);
+          }
         }
       }
     });
@@ -442,7 +468,14 @@ public class Bluetooth extends CordovaPlugin {
       return;
     }
 
-    mListening = false;
+    if (mBluetoothServerSocket != null) {
+      try {
+        mBluetoothServerSocket.close();
+      } catch (Exception ignored) {}
+
+      mBluetoothServerSocket = null;
+    }
+
     callbackContext.success();
   }
 
@@ -615,7 +648,7 @@ public class Bluetooth extends CordovaPlugin {
       callbackContext.error("Bluetooth is not supported");
       return;
     }
-  
+
     mBluetoothAdapter.disable();
   	callbackContext.success();
   }

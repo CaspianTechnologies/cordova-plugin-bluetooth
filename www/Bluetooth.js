@@ -120,6 +120,10 @@ exports.write = function(data) {
 	});
 };
 
+exports.setListeningCallback = function(callback) {
+  exec(callback, () => callback(null), "Bluetooth", "setListeningCallback", []);
+};
+
 exports.setConnectedCallback = function(callback) {
   exec(callback, () => callback(null), "Bluetooth", "setConnectedCallback", []);
 };
