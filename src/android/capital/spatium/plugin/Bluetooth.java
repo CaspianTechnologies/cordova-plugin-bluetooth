@@ -163,9 +163,8 @@ public class Bluetooth extends CordovaPlugin {
       String device;
       String address;
       try {
-        device = args.getJSONObject(0).getString("name");
         address = args.getJSONObject(0).getString("address");
-        connect(device,address,callbackContext);
+        connect(address,callbackContext);
       } catch (Exception e) {
         callbackContext.error("Invalid arguments");
       }
@@ -484,7 +483,7 @@ public class Bluetooth extends CordovaPlugin {
     callbackContext.sendPluginResult(result);
   }
 
-  private void connect(String device, String address, final CallbackContext callbackContext) {
+  private void connect(String address, final CallbackContext callbackContext) {
     if(mBluetoothAdapter == null || !mBluetoothAdapter.isEnabled()) {
       callbackContext.error("Bluetooth is not enabled");
       return;
