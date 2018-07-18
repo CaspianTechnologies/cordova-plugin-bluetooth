@@ -249,7 +249,7 @@
     if (services.length > 0) {
       const service = services.filter(function (service) { return service.id.startsWith(device.address) })[0]
       //console.log('SERVICE!!! ID: ' + service.id)
-      await connectAsync(successCallback, errorCallback, [{ address: service.id, name: device.name }])
+      await connectAsync(successCallback, errorCallback, [{ address: service.id }])
     } else {
       const errorMessage = "No services were found AFTER PAIRING. "
       console.log(errorMessage)
