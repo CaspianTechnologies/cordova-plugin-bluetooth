@@ -293,12 +293,12 @@
           _service.connectionHostName,
           _service.connectionServiceName,
           sockets.SocketProtectionLevel.plainSocket).done(function () {
-			_socket = socket;
+            _socket = socket;
             _writer = new streams.DataWriter(_socket.outputStream)
             _connectedCallback(device, { keepCallback: true })
             successCallback()
           }, function (error) {
-			socket.close()
+            socket.close()
             console.log("Failed to connect to server, with error: " + error)
             errorCallback(error)
           })
@@ -375,8 +375,7 @@
               successCallback(devices)
             }, function (error) { console.log('error converting services to devices info: ' + error) })
           } else {
-            console.log("No services were found. Please pair Windows with a device that is " +
-              "advertising the service")
+		    successCallback([]);
           }
         })
     },
