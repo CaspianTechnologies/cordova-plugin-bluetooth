@@ -288,15 +288,17 @@
         attributeReader.unicodeEncoding = streams.UnicodeEncoding.utf8
         //console.log("Service Name: \"" + attributeReader.readString(serviceNameLength) + "\"")
 
-        _socket = new sockets.StreamSocket()
-        _socket.connectAsync(
+        var socket = new sockets.StreamSocket()
+        socket.connectAsync(
           _service.connectionHostName,
           _service.connectionServiceName,
           sockets.SocketProtectionLevel.plainSocket).done(function () {
+			_socket = socket;
             _writer = new streams.DataWriter(_socket.outputStream)
             _connectedCallback(device, { keepCallback: true })
             successCallback()
           }, function (error) {
+			socket.close()
             console.log("Failed to connect to server, with error: " + error)
             errorCallback(error)
           })
