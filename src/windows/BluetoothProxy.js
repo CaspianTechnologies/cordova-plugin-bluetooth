@@ -340,19 +340,25 @@
       if (_bluetoothAdapter) {
         Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
         successCallback()
-      }
+      } else {
+		errorCallback("No bluetooth adapter found")
+	  }
     },
     enable: function (successCallback, errorCallback, params) {
       if (_bluetoothAdapter) {
         Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
         successCallback()
-      }
+      } else {
+		errorCallback("No bluetooth adapter found")
+	  }
     },
 	disable: function (successCallback, errorCallback, params) {
       if (_bluetoothAdapter) {
         Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
         successCallback()
-      }
+      } else {
+		errorCallback("No bluetooth adapter found")
+	  }
     },
     listPairedDevices: function (successCallback, errorCallback, params) {
       if (!_bluetoothAdapter || !_bluetoothAdapter.state === Windows.Devices.Radios.RadioState.on) {
