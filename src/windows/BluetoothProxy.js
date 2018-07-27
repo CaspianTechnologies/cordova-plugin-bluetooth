@@ -248,15 +248,37 @@ async function findServiceAsync(id) {
     });
 
     if (matching.length > 0) {
-      service = matching[0];
+      service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(matching[0].id);
     }
   }
   return service;
 }
 
+async function findDeviceAsync(id) {
+  return await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(id);
+}
+
 async function listServicesAsync() {
   return await Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
-    Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.getDeviceSelector(Windows.Devices.Bluetooth.Rfcomm.RfcommServiceId.fromUuid(SERVICE_UUID)), null);
+    Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.getDeviceSelector(
+      Windows.Devices.Bluetooth.Rfcomm.RfcommServiceId.fromUuid(SERVICE_UUID)
+    ),
+    null
+  );
+}
+
+async function listPairedDevicesAsync() {
+  const devices = await Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
+    Windows.Devices.Bluetooth.BluetoothDevice.getDeviceSelector(),
+    null
+  );
+  
+  return devices.map(device => {
+    return {
+      name: device.name ? device.name : 'Unknown',
+      address: device.id
+    };
+  });
 }
 
 async function getDevicesAsync(services) {
@@ -345,9 +367,7 @@ cordova.commandProxy.add("Bluetooth", {
         return;
       }
 
-      const services = await listServicesAsync();
-
-      const devices = await getDevicesAsync(services);
+      const devices = await listPairedDevicesAsync();
 
       successCallback(devices);
     } catch (e) {
@@ -446,7 +466,7 @@ cordova.commandProxy.add("Bluetooth", {
         return;
       }
 
-      plugin.service = findServiceAsync(device.address);
+      plugin.service = await findServiceAsync(device.address);
       if (plugin.service) {
         plugin.socket = await connectToServiceAsync(plugin.service);
         plugin.writer = new Windows.Storage.Streams.DataWriter(plugin.socket.outputStream);
