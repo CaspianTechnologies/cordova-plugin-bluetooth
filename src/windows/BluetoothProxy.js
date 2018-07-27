@@ -405,11 +405,6 @@ cordova.commandProxy.add("Bluetooth", {
     }
 
     try {
-      if (!plugin.watcher) {
-        errorCallback("Device watcher isn't initialized");
-        return
-      }
-
       plugin.watcher.stop();
 
       successCallback()
@@ -524,7 +519,6 @@ cordova.commandProxy.add("Bluetooth", {
 	  
       do {
         const message = await loadMessageAsync(reader);
-        console.log('received', message);
         plugin.message(message);
       } while (plugin.reading);
     } catch (e) {
@@ -552,8 +546,6 @@ cordova.commandProxy.add("Bluetooth", {
   write: async (successCallback, errorCallback, params) => {
     try {
       const message = params[0];
-
-      console.log('sending', message);
 	  
       plugin.writer.writeString(message + '\n');
       await plugin.writer.storeAsync();
