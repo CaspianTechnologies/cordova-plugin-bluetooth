@@ -144,6 +144,10 @@ exports.setMessageCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setMessageCallback", []);
 };
 
+exports.setSupportedCallback = function(callback) {
+  exec(callback, null, "Bluetooth", "setSupportedCallback", []);
+};
+
 exports.setStateCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setStateCallback", []);
 };

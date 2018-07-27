@@ -1,499 +1,553 @@
-  var rfcomm = Windows.Devices.Bluetooth.Rfcomm
-  var sockets = Windows.Networking.Sockets
-  var streams = Windows.Storage.Streams
-  var deviceInfo = Windows.Devices.Enumeration.DeviceInformation
-  //var wsc = Windows.Security.Cryptography
-  var SERVICE_UUID = "{995f40e0-ce68-4d24-8f68-f49d2b9d661f}"
-  // The Id of the Service Name SDP attribute
-  var SDP_SERVICE_NAME_ATTRIBUTE_ID = 0x100
-  // The SDP Type of the Service Name SDP attribute.
-  // The first byte in the SDP Attribute encodes the SDP Attribute Type as follows :
-  //    -  the Attribute Type size in the least significant 3 bits,
-  //    -  the SDP Attribute Type value in the most significant 5 bits.
-  var SDP_SERVICE_NAME_ATTRIBUTE_TYPE = (4 << 3) | 5
+const SERVICE_UUID = "{995f40e0-ce68-4d24-8f68-f49d2b9d661f}";
 
-  var _service
-  var _socket
-  var _services
-  var _writer
-  var _reader
-  var _isReading
+const SDP_SERVICE_NAME_ATTRIBUTE_ID = 0x100;
+const SDP_SERVICE_NAME_ATTRIBUTE_TYPE = (4 << 3) | 5;
 
-  var _bluetoothAdapter
-  var _watcher
-  var _deviceArray = []
+const ANDROID_STATE_OFF = 0x0000000a;
+const ANDROID_STATE_TURNING_ON = 0x0000000b;
+const ANDROID_STATE_ON = 0x0000000c;
+const ANDROID_STATE_TURNING_OFF = 0x0000000d;
 
-  var _messageCallback
-  var _connectedCallback
-  var _stateCallback
-  var _discoveryCallback
-  var _discoveredCallback
-  var _discoverableCallback
-  var _listeningCallback
+const StateMap = {};
+StateMap[Windows.Devices.Radios.RadioState.disabled] = ANDROID_STATE_OFF;
+StateMap[Windows.Devices.Radios.RadioState.off] = ANDROID_STATE_OFF;
+StateMap[Windows.Devices.Radios.RadioState.on] = ANDROID_STATE_ON;
+StateMap[Windows.Devices.Radios.RadioState.unknown] = ANDROID_STATE_OFF;
 
-  var ANDROID_STATE_OFF = 0x0000000a
-  var ANDROID_STATE_TURNING_ON = 0x0000000b
-  var ANDROID_STATE_ON = 0x0000000c
-  var ANDROID_STATE_TURNING_OFF = 0x0000000d
+const plugin = (() => {
+  let _supported = false;
+  let _state = false;
+  let _discovering = false;
+  let _reading = false;
 
-  var _stateMap = {}
-  _stateMap[Windows.Devices.Radios.RadioState.disabled] = ANDROID_STATE_OFF
-  _stateMap[Windows.Devices.Radios.RadioState.off] = ANDROID_STATE_OFF
-  _stateMap[Windows.Devices.Radios.RadioState.on] = ANDROID_STATE_ON
-  _stateMap[Windows.Devices.Radios.RadioState.unknown] = ANDROID_STATE_OFF
+  let _connectedDevice = null;
 
-  _watcher = new Windows.Devices.Enumeration.DeviceInformation.createWatcher
-    (Windows.Devices.Bluetooth.BluetoothDevice.getDeviceSelectorFromPairingState(false), null)
-  _watcher.addEventListener("added", onAdded)
-  _watcher.addEventListener("removed", onRemoved)
-  _watcher.addEventListener("updated", onUpdated)
-  _watcher.addEventListener("enumerationcompleted", onEnumerationCompleted)
-  _watcher.addEventListener("stopped", onStopped)
+  let _supportedCallback = null;
+  let _stateCallback = null;
+  let _discoveringCallback = null;
+  let _readingCallback = null;
+  let _messageCallback = null;
+  let _connectedDeviceCallback = null;
+  let _discoveredCallback = null;
 
-  function onAdded(devinfo) {
-    if (_discoveredCallback) {
-      _discoveredCallback({ name: devinfo.name ? devinfo.name : 'Communications device', address: devinfo.id }, { keepCallback: true })
-    }
-
-    console.log('Device added: ' + devinfo.name)
-    _deviceArray.push(devinfo)
-  }
-
-  function onUpdated(devUpdate) {
-    console.log('Device updated. ID: ${devUpdate.id} and ${devUpdate.name}')
-    for (var i = 0; i < _deviceArray.length; i++) {
-      if (_deviceArray[i].id == devUpdate.id) {
-        _deviceArray[i].update(devUpdate)
-
-        if (_discoveredCallback) {
-          _discoveredCallback({ name: _deviceArray[i].name ? _deviceArray[i].name : 'Communications device', address: _deviceArray[i].id }, { keepCallback: true })
-        }
-        console.log('Device updated. name:  ${_deviceArray[i].name}')
+  return {
+    // state control
+    get supported() {
+      return _supported;
+    },
+    set supported(value) {
+      if (value === _supported) {
+        return;
       }
-    }
-  }
 
-  function onRemoved(devUpdate) {
-    console.log('Device removed. ID: ${devUpdate.id}');
-    for (var i = 0; i < _deviceArray.length; i++) {
-      if (_deviceArray[i].id == devUpdate.id) {
-        _deviceArray.splice(i, 1)
+      _supported = value;
+      if (_supportedCallback) {
+        _supportedCallback(_supported, { keepCallback: true });
       }
-    }
-  }
-
-  function onEnumerationCompleted(obj) {
-    _watcher.stop()
-    console.log('Enumeration Completed')
-  }
-
-  function onStopped(obj) {
-    _discoveryCallback(false, { keepCallback: true })
-    console.log('Stopped.')
-  }
-
-  function adapterStateChanged(result) {
-    console.log('adapter state changed, new state: ' + _stateMap[_bluetoothAdapter.state])
-    _stateCallback(_stateMap[_bluetoothAdapter.state], { keepCallback: true })
-  }
-
-  async function getBluetoothAdapterAsync() {
-    var radios = await Windows.Devices.Radios.Radio.getRadiosAsync()
-    console.log('radios: ' + radios)
-    var bluetoothAdapter = radios.filter(function (radio) {
-      return radio.name === 'Bluetooth'
-    })[0]
-    _bluetoothAdapter = bluetoothAdapter
-    if (_bluetoothAdapter) {
-      _bluetoothAdapter.addEventListener('statechanged', adapterStateChanged)
-    }
-    return bluetoothAdapter
-  }
-
-  getBluetoothAdapterAsync()
-
-  async function loadMessageAsync(reader) {
-    var message = ''
-    var actualStringLength = 0
-    var BYTES_TO_READ = 1
-    while (true) {
-      actualStringLength = await reader.loadAsync(BYTES_TO_READ)
-      if (actualStringLength < BYTES_TO_READ) {
-        disconnect()
-        console.log('Client disconnected.')
-        if (_connectedCallback) {
-          _connectedCallback(null, { keepCallback: true, status: cordova.callbackStatus.ERROR })
-        }
-        _isReading = false
-        break
+    },
+    // state control
+    get state() {
+      return _state;
+    },
+    set state(value) {
+      if (value === _state) {
+        return;
       }
-      var char = reader.readString(actualStringLength)
-      if (char !== '\n') {
-        message += char
-      } else break
-    }
 
-    return message
-  }
+      _state = value;
+      if (_stateCallback) {
+        _stateCallback(_state, { keepCallback: true });
+      }
+    },
+    // connected control
+    get connectedDevice() {
+      return _connectedDevice;
+    },
+    set connectedDevice(value) {
+      if (value === _connectedDevice) {
+        return;
+      }
 
-  function receiveStringLoop(reader) {
-    if (!_isReading) return
+      _connectedDevice = value;
+      if (_connectedDeviceCallback) {
+        _connectedDeviceCallback(_connectedDevice, { keepCallback: true });
+      }
+    },
+    // discovering control
+    get discovering() {
+      return _discovering;
+    },
+    set discovering(value) {
+      if (value === _discovering) {
+        return;
+      }
 
-    loadMessageAsync(reader).then(message => {
-      console.log("Received: " + message)
+      _discovering = value;
+      if (_discoveringCallback) {
+        _discoveringCallback(_discovering, { keepCallback: true });
+      }
+    },
+    // reading control
+    get reading() {
+      return _reading;
+    },
+    set reading(value) {
+      if (value === _reading) {
+        return;
+      }
+
+      _reading = value;
+      if (_readingCallback) {
+        _readingCallback(_reading, { keepCallback: true });
+      }
+    },
+    // device discovered
+    discovered: (device) => {
+      if (_discoveredCallback) {
+        _discoveredCallback(device, { keepCallback: true });
+      }
+    },
+    // message received
+    message: (message) => {
       if (_messageCallback) {
-        _messageCallback(message, { keepCallback: true })
+        _messageCallback(message, { keepCallback: true });
       }
-      // Restart the read for more bytes. We could just call receiveStringLoop() but in the case subsequent
-      // read operations complete synchronously we start building up the stack and potentially crash. We use
-      // WinJS.Promise.timeout() invoke this function after the stack for current call unwinds.
-      WinJS.Promise.timeout().done(function () { return receiveStringLoop(reader) })
-    }, function (error) {
-      _isReading = false
-      console.log("Failed to read the message, with error: " + error)
-      // TODO:
-      //_messageErrorCallback(error)
-    })
+    },
+    set supportedCallback(callback) {
+      _supportedCallback = callback;
+    },
+    set stateCallback(callback) {
+      _stateCallback = callback;
+    },
+    set discoveringCallback(callback) {
+      _discoveringCallback = callback;
+    },
+    set readingCallback(callback) {
+      _readingCallback = callback;
+    },
+    set messageCallback(callback) {
+      _messageCallback = callback;
+    },
+    set connectedDeviceCallback(callback) {
+      _connectedDeviceCallback = callback;
+    },
+    set discoveredCallback(callback) {
+      _discoveredCallback = callback;
+    },
+    // uncontrolled data
+    socket: null,
+    service: null,
+    writer: null,
+    watcher: null,
+    adapter: null
   }
+})();
 
-  function disconnect() {
-    if (_writer) {
-      _writer.detachStream()
-      _writer = null
+async function getBluetoothAdapterAsync() {
+  const radios = await Windows.Devices.Radios.Radio.getRadiosAsync();
+  const bluetoothAdapters = radios.filter(radio => {
+    return radio.name.toLowerCase() === 'bluetooth';
+  });
+
+  return bluetoothAdapters.length > 0 ? bluetoothAdapters[0] : null;
+}
+
+function stateHandler(state) {
+  console.log(state, plugin.adapter.state);
+  plugin.state = StateMap[plugin.adapter.state];
+}
+
+async function refreshAdapterState() {
+	const adapter = await getBluetoothAdapterAsync();
+
+  if (adapter && !plugin.adapter) {
+    plugin.adapter = adapter;
+	plugin.supported = true;
+    plugin.adapter.addEventListener('statechanged', stateHandler);
+    plugin.state = StateMap[plugin.adapter.state];
+  } else if (!adapter && plugin.adapter) {
+    plugin.adapter.removeEventListener('statechanged', stateHandler);
+    plugin.adapter = null;
+	plugin.supported = false;
+    plugin.state = ANDROID_STATE_OFF;
+  }
+}
+
+refreshAdapterState().then(() => setInterval(refreshAdapterState, 1000));
+
+function setupDiscoveryWatcher(discoveredCallback, stoppedCallback) {
+  const watcher = new Windows.Devices.Enumeration.DeviceInformation.createWatcher(Windows.Devices.Bluetooth.BluetoothDevice.getDeviceSelectorFromPairingState(false), null);
+
+  let deviceArray = [];
+
+  watcher.addEventListener("added", devInfo => {
+    discoveredCallback(devInfo);
+
+    deviceArray.push(devInfo);
+  });
+
+  watcher.addEventListener("removed", devUpdate => {
+    deviceArray = deviceArray.filter(devInfo => devInfo.id !== devUpdate.id );
+  });
+
+  watcher.addEventListener("updated", devUpdate => {
+    deviceArray.filter(devInfo => devInfo.id === devUpdate.id).forEach(devInfo => {
+      devInfo.update(devUpdate);
+
+      discoveredCallback(devInfo);
+    });
+  });
+
+  watcher.addEventListener("enumerationcompleted", () => {
+    watcher.stop();
+  });
+
+  watcher.addEventListener("stopped", () => {
+    stoppedCallback();
+  });
+
+  return watcher;
+}
+
+plugin.watcher = setupDiscoveryWatcher(devInfo => {
+  plugin.discovered({
+    name: devInfo.name ? devInfo.name : 'Unknown',
+    address: devInfo.id
+  });
+}, () => {
+  plugin.discovering = false;
+});
+
+async function loadMessageAsync(reader) {
+  const BYTES_TO_READ = 1;
+
+  let message = '';
+  let bytesRead = 0;
+  let char = null;
+  do {
+    bytesRead = await reader.loadAsync(BYTES_TO_READ);
+    if (bytesRead < BYTES_TO_READ) {
+      throw new Error('Client disconnected');
     }
 
-    if (_socket) {
-      _socket.close()
-      _socket = null
-    } else {
-      console.log('not connected')
+    char = reader.readString(bytesRead);
+    if (char !== '\n') {
+      message += char;
+    }
+  } while (char !== '\n');
+
+  return message;
+}
+
+async function findServiceAsync(id) {
+  let service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(id);
+  if (!service) {
+    const services = await listServicesAsync();
+    const matching = services.filter(service => {
+      return service.id.toLowerCase().indexOf(id.toLowerCase()) !== -1;
+    });
+
+    if (matching.length > 0) {
+      service = matching[0];
     }
   }
+  return service;
+}
 
-  async function getDevicesFromServicesAsync(services) {
-    let devices = []
-    for (service of services) {
-      let dev = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(service.id)
-      let device = { name: dev.name, address: service.id }
-      devices.push(device)
-    }
+async function listServicesAsync() {
+  return await Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
+    Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.getDeviceSelector(Windows.Devices.Bluetooth.Rfcomm.RfcommServiceId.fromUuid(SERVICE_UUID)), null);
+}
 
-    return devices
+async function getDevicesAsync(services) {
+  const devices = [];
+  for (const service of services) {
+    const device = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(service.id);
+    devices.push({
+      name: device && device.name ? device.name : 'Unknown',
+      address: service.id
+    });
   }
+  return devices;
+}
 
-  async function connectAsync(successCallback, errorCallback, params) {
-    if (!_bluetoothAdapter ||
-      !_bluetoothAdapter.state === Windows.Devices.Radios.RadioState.on) {
-      errorCallback("Bluetooth is not enabled")
-      return
-    }
+async function connectToServiceAsync(service) {
+  const socket = new Windows.Networking.Sockets.StreamSocket();
+  await socket.connectAsync(
+    service.connectionHostName,
+    service.connectionServiceName,
+    Windows.Networking.Sockets.SocketProtectionLevel.plainSocket
+  );
 
-    if (_socket) {
-      errorCallback("Already connected")
-      return
-    }
+  return socket;
+}
 
-    let device = params[0]
-
-    let service
+cordova.commandProxy.add("Bluetooth", {
+  getSupported: async (successCallback, errorCallback) => {
     try {
-      service = await rfcomm.RfcommDeviceService.fromIdAsync(device.address)
+      const adapter = await getBluetoothAdapterAsync();
+      successCallback(adapter !== null)
+    } catch (e) {
+      errorCallback(e);
     }
-    catch (error) {
-      const errorMessage = 'failed to create rfcomm service from device address (id) with error: ' + error
-      console.log(errorMessage)
-      errorCallback(errorMessage)
-      return
-    }
-
-    if (service) {
-      connectToService(successCallback, errorCallback, service, device)
-      return
-    }
-
-    // Get object with full info including supported rfcomm services, pairing, ...
-    let bluetoothDevice
+  },
+  getState: async (successCallback, errorCallback) => {
     try {
-      bluetoothDevice = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(device.address)
+      const adapter = await getBluetoothAdapterAsync();
+      if (adapter) {
+        successCallback(StateMap[adapter.state]);
+      } else {
+        errorCallback('Bluetooth is not supported');
+      }
+    } catch (e) {
+      errorCallback(e);
     }
-    catch (error) {
-      const errorMessage = 'failed to create bluetooth device from device address with error: ' + error
-      errorCallback(errorMessage)
-      return
-    }
-
-    let pairingResult
+  },
+  getDiscoverable: (successCallback, errorCallback) => {
+    successCallback(false);
+  },
+  getListening: (successCallback, errorCallback) => {
+    successCallback(false);
+  },
+  getConnected: (successCallback) => {
+    successCallback(!!plugin.connectedDevice)
+  },
+  requestEnable: (successCallback, errorCallback) => {
     try {
-      pairingResult = await bluetoothDevice.deviceInformation.pairing.pairAsync();
-    }
-    catch (error) {
-      const errorMessage = 'failed to pair devices with error: ' + error
-      errorCallback(errorMessage)
-      return
-    }
-
-    console.log('pairing result: ')
-    console.log(pairingResult)
-
-    if (!pairingResult || (pairingResult.status !== 3 && pairingResult.status !== Windows.Devices.Enumeration.DevicePairingResultStatus.paired)) {
-      const errorMessage = 'failed to pair devices'
-      console.log(errorMessage)
-      errorCallback(errorMessage)
-      return
-    }
-
-    // const service = bluetoothDevice.rfcommServices.filter((service) => { return SERVICE_UUID.includes(service.serviceId.uuid) })[0]
-    const services = await Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
-      rfcomm.RfcommDeviceService.getDeviceSelector(rfcomm.RfcommServiceId.fromUuid(SERVICE_UUID)),
-      null)
-    if (services.length > 0) {
-      const service = services.filter(function (service) { return service.id.startsWith(device.address) })[0]
-      //console.log('SERVICE!!! ID: ' + service.id)
-      await connectAsync(successCallback, errorCallback, [{ address: service.id }])
-    } else {
-      const errorMessage = "No services were found AFTER PAIRING. "
-      console.log(errorMessage)
-      errorCallback(errorMessage)
-    }
-  }
-
-
-  function connectToService(successCallback, errorCallback, service, device) {
-    _service = service
-
-    _service.getSdpRawAttributesAsync(Windows.Devices.Bluetooth.BluetoothCacheMode.uncached).done(
-      function (attributes) {
-        var buffer = attributes.lookup(SDP_SERVICE_NAME_ATTRIBUTE_ID)
-        if (buffer === null) {
-          var errorMessage = "The Spatium service is not advertising the Service Name attribute (attribute " +
-            "id=0x100). Please verify that you are running the Spatium server."
-          errorCallback(errorMessage)
-          console.log(errorMessage)
-          return
-        }
-
-        var attributeReader = streams.DataReader.fromBuffer(buffer)
-        var attributeType = attributeReader.readByte()
-        if (attributeType !== SDP_SERVICE_NAME_ATTRIBUTE_TYPE) {
-          var errorMessage = "The Spatium service is using an expected format for the Service Name attribute. " +
-            "Please verify that you are running the Spatium server."
-          errorCallback(errorMessage)
-          console.log(errorMessage)
-          return
-        }
-
-        var serviceNameLength = attributeReader.readByte()
-
-        // The Service Name attribute requires UTF-8 encoding.
-        attributeReader.unicodeEncoding = streams.UnicodeEncoding.utf8
-        //console.log("Service Name: \"" + attributeReader.readString(serviceNameLength) + "\"")
-
-        var socket = new sockets.StreamSocket()
-        socket.connectAsync(
-          _service.connectionHostName,
-          _service.connectionServiceName,
-          sockets.SocketProtectionLevel.plainSocket).done(function () {
-            _socket = socket;
-            _writer = new streams.DataWriter(_socket.outputStream)
-            _connectedCallback(device, { keepCallback: true })
-            successCallback()
-          }, function (error) {
-            socket.close()
-            console.log("Failed to connect to server, with error: " + error)
-            errorCallback(error)
-          })
-      }, function (error) {
-        console.log("Failed to retrieve SDP attributes, with error: " + error)
-        errorCallback(error)
-      }
-    )
-  }
-
-  cordova.commandProxy.add("Bluetooth", {
-    getSupported: function (successCallback, errorCallback, params) {
-      Windows.Devices.Radios.Radio.getRadiosAsync()
-        .done(function (radios) {
-          var isSupported = !!radios.reduce(function (acc, radio) {
-            return radio.name === 'Bluetooth' ? ++acc : acc
-          }, 0)
-          successCallback(isSupported)
-        })
-    },
-    getState: function (successCallback, errorCallback, params) {
-      if (_bluetoothAdapter) {
-        console.log('getState adapter state: ' + _stateMap[_bluetoothAdapter.state])
-        successCallback(_stateMap[_bluetoothAdapter.state])
-      } else {
-        errorCallback("Bluetooth is not supported")
-      }
-    },
-    getDiscoverable: function (successCallback, errorCallback, params) {
-      console.log("getDiscoverable!")
-    },
-    getListening: function (successCallback, errorCallback, params) {
-      console.log("getListening!")
-    },
-    getConnected: function (successCallback, errorCallback, params) {
-      successCallback(!!_socket)
-    },
-	requestEnable: function (successCallback, errorCallback, params) {
-      if (_bluetoothAdapter) {
-        Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
-        successCallback()
-      } else {
-		errorCallback("No bluetooth adapter found")
-	  }
-    },
-    enable: function (successCallback, errorCallback, params) {
-      if (_bluetoothAdapter) {
-        Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
-        successCallback()
-      } else {
-		errorCallback("No bluetooth adapter found")
-	  }
-    },
-	disable: function (successCallback, errorCallback, params) {
-      if (_bluetoothAdapter) {
-        Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"))
-        successCallback()
-      } else {
-		errorCallback("No bluetooth adapter found")
-	  }
-    },
-    listPairedDevices: function (successCallback, errorCallback, params) {
-      if (!_bluetoothAdapter || !_bluetoothAdapter.state === Windows.Devices.Radios.RadioState.on) {
-        errorCallback("Bluetooth is not enabled")
-        return
-      }
-
-      Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
-        rfcomm.RfcommDeviceService.getDeviceSelector(rfcomm.RfcommServiceId.fromUuid(SERVICE_UUID)),
-        null).done(function (services) {
-          _services = []
-          if (services.length > 0) {
-            getDevicesFromServicesAsync(services).then(function (devices) {
-              successCallback(devices)
-            }, function (error) { console.log('error converting services to devices info: ' + error) })
-          } else {
-		    successCallback([]);
-          }
-        })
-    },
-    startDiscovery: function (successCallback, errorCallback, params) {
-      if (!_bluetoothAdapter ||
-        !_bluetoothAdapter.state === Windows.Devices.Radios.RadioState.on) {
-        errorCallback("Bluetooth is not enabled")
-        return
-      }
-      if (!_watcher) {
-        errorCallback("Device watcher isn't initialized")
-        return
-      }
-
-      try {
-        _deviceArray = []
-        _watcher.start()
-        _discoveryCallback(true, { keepCallback: true })
-      }
-      catch (e) {
-        var message = "Failed to start discovery: " + e.message
-        console.log(message)
-        errorCallback(message)
-        return
-      }
+      Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"));
       successCallback()
-    },
-    cancelDiscovery: function (successCallback, errorCallback, params) {
-      console.log('cancelDiscovery called!')
-      if (!_watcher) {
-        errorCallback("Device watcher isn't initialized")
-        return
-      }
-      try {
-        if (!_watcher.status === Windows.Devices.Enumeration.DeviceWatcherStatus.stopped)
-          _watcher.stop()
-        successCallback()
-      }
-      catch (e) {
-        var message = "Failed to cancel discovery: " + e.message
-        console.log(message)
-        errorCallback(message)
-        return
-      }
-    },
-    enableDiscovery: function (successCallback, errorCallback, params) {
-      console.log("enableDiscovery!")
-    },
-    startListening: function (successCallback, errorCallback, params) {
-      console.log("startListening!")
-    },
-    stopListening: function (successCallback, errorCallback, params) {
-      console.log("stopListening!")
-    },
-    connect: async function (successCallback, errorCallback, params) {
-      await connectAsync(successCallback, errorCallback, params)
-    },
-    disconnect: function (successCallback, errorCallback, params) {
-      disconnect()
-      successCallback()
-    },
-    startReading: function (successCallback, errorCallback, params) {
-      if (!_socket) {
-        errorCallback("Not connected")
-        return
-      }
-      _isReading = true
-      receiveStringLoop(new streams.DataReader(_socket.inputStream))
-      successCallback()
-    },
-    getReading: function (successCallback, errorCallback, params) {
-      successCallback(_isReading)
-    },
-    stopReading: function (successCallback, errorCallback, params) {
-      if (!_isReading) {
-        errorCallback("Not reading")
-        return
-      }
-
-      _isReading = false
-      successCallback()
-    },
-    write: function (successCallback, errorCallback, params) {
-      try {
-        var message = params[0]
-        _writer.writeString(message + '\n')
-        _writer.storeAsync().done(function () {
-          console.log('message sent: ' + message)
-        }, function (error) {
-          console.log("Failed to send the message to the server, error: " + error)
-          errorCallback(error)
-        })
-
-      } catch (error) {
-        errorCallback(error)
-        console.log("Sending message failed with error: " + error)
-      }
-      successCallback()
-    },
-    setConnectedCallback: function (successCallback, errorCallback, params) {
-      _connectedCallback = successCallback
-    },
-    setDiscoverableCallback: function (successCallback, errorCallback, params) {
-      _discoverableCallback = successCallback
-    },
-    setDiscoveredCallback: function (successCallback, errorCallback, params) {
-      _discoveredCallback = successCallback
-    },
-    setDiscoveryCallback: function (successCallback, errorCallback, params) {
-      _discoveryCallback = successCallback
-    },
-    setMessageCallback: function (successCallback, errorCallback, params) {
-      _messageCallback = successCallback
-    },
-    setStateCallback: function (successCallback, errorCallback, params) {
-      _stateCallback = successCallback
-    },
-    setListeningCallback: function (successCallback, errorCallback, params) {
-      _listeningCallback = successCallback
+    } catch (e) {
+      errorCallback(e)
     }
-  })
+  },
+  enable: (successCallback, errorCallback) => {
+    try {
+      Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"));
+      successCallback()
+    } catch (e) {
+      errorCallback(e)
+    }
+  },
+  disable: (successCallback, errorCallback) => {
+    try {
+      Windows.System.Launcher.launchUriAsync(Windows.Foundation.Uri("ms-settings-bluetooth:"));
+      successCallback()
+    } catch (e) {
+      errorCallback(e)
+    }
+  },
+  listPairedDevices: async (successCallback, errorCallback) => {
+    try {
+      const adapter = await getBluetoothAdapterAsync();
+
+      if (!adapter || !adapter.state === Windows.Devices.Radios.RadioState.on) {
+        errorCallback("Bluetooth is not enabled");
+        return;
+      }
+
+      const services = await listServicesAsync();
+
+      const devices = await getDevicesAsync(services);
+
+      successCallback(devices);
+    } catch (e) {
+      errorCallback(e);
+    }
+  },
+  startDiscovery: async (successCallback, errorCallback) => {
+    if (plugin.discovering) {
+      errorCallback("Already discovering");
+      return;
+    }
+
+    try {
+      plugin.discovering = true;
+
+      const adapter = await getBluetoothAdapterAsync();
+
+      if (!adapter || !adapter.state === Windows.Devices.Radios.RadioState.on) {
+        errorCallback("Bluetooth is not enabled");
+        return;
+      }
+
+      plugin.watcher.start();
+
+      successCallback();
+    } catch (e) {
+      plugin.discovering = false;
+      errorCallback(e);
+    }
+  },
+  cancelDiscovery: async (successCallback, errorCallback) => {
+    if (!plugin.discovering) {
+      errorCallback("Not discovering");
+      return;
+    }
+
+    try {
+      if (!plugin.watcher) {
+        errorCallback("Device watcher isn't initialized");
+        return
+      }
+
+      plugin.watcher.stop();
+
+      successCallback()
+    } catch (e) {
+      errorCallback(e);
+    }
+  },
+  enableDiscovery: (successCallback, errorCallback) => {
+    errorCallback('Discoverable mode is not supported');
+  },
+  startListening: (successCallback, errorCallback) => {
+    errorCallback('Listening mode is not supported');
+  },
+  stopListening: (successCallback, errorCallback) => {
+    errorCallback('Listening mode is not supported');
+  },
+  connect: async (successCallback, errorCallback, params) => {
+    try {
+      const adapter = await getBluetoothAdapterAsync();
+
+      if (!adapter || !adapter.state === Windows.Devices.Radios.RadioState.on) {
+        errorCallback("Bluetooth is not enabled");
+        return;
+      }
+
+      if (plugin.connectedDevice) {
+        errorCallback("Already connected");
+        return;
+      }
+
+      const device = params[0];
+
+      plugin.service = await findServiceAsync(device.address);
+      if (plugin.service) {
+        plugin.socket = await connectToServiceAsync(plugin.service);
+        plugin.writer = new Windows.Storage.Streams.DataWriter(plugin.socket.outputStream);
+        plugin.connectedDevice = device;
+
+        successCallback();
+        return;
+      }
+
+      const bluetoothDevice = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(device.address);
+
+      if (!bluetoothDevice) {
+        errorCallback('Failed to find a device with id: ' + device.address);
+        return;
+      }
+
+      const pairingResult = await bluetoothDevice.deviceInformation.pairing.pairAsync();
+
+      if (!pairingResult || (pairingResult.status !== 3 && pairingResult.status !== Windows.Devices.Enumeration.DevicePairingResultStatus.paired)) {
+        errorCallback('Failed to pair devices');
+        return;
+      }
+
+      plugin.service = findServiceAsync(device.address);
+      if (plugin.service) {
+        plugin.socket = await connectToServiceAsync(plugin.service);
+        plugin.writer = new Windows.Storage.Streams.DataWriter(plugin.socket.outputStream);
+        plugin.connectedDevice = device;
+
+        successCallback();
+        return;
+      }
+
+      errorCallback('Failed to pair and then connect');
+    } catch (e) {
+      if (plugin.writer) {
+        plugin.writer.detachStream();
+        plugin.writer = null;
+      }
+
+      if (plugin.socket) {
+        plugin.socket.close();
+        plugin.socket = null;
+      }
+      errorCallback(e);
+    }
+  },
+  disconnect: (successCallback, errorCallback) => {
+    plugin.connectedDevice = null;
+    try {
+      if (plugin.writer) {
+        plugin.writer.detachStream();
+        plugin.writer = null;
+      }
+
+      if (plugin.socket) {
+        plugin.socket.close();
+        plugin.socket = null;
+      }
+      successCallback();
+    } catch (e) {
+      errorCallback(e);
+    }
+  },
+  startReading: async (successCallback, errorCallback) => {
+    if (!plugin.socket) {
+      errorCallback("Not connected");
+      return;
+    }
+
+	let reader = null;
+	
+    try {
+      plugin.reading = true;
+
+      successCallback();
+
+	  reader = new Windows.Storage.Streams.DataReader(plugin.socket.inputStream)
+	  
+      do {
+        const message = await loadMessageAsync(reader);
+        console.log('received', message);
+        plugin.message(message);
+      } while (plugin.reading);
+    } catch (e) {
+      disconnect();
+
+      errorCallback(e);
+    } finally {
+      reader.detachStream();
+      plugin.reading = false;
+    }
+  },
+  getReading: (successCallback) => {
+    successCallback(plugin.reading)
+  },
+  stopReading: function (successCallback, errorCallback) {
+    if (!plugin.reading) {
+      errorCallback("Not reading");
+      return;
+    }
+
+    plugin.reading = false;
+
+    successCallback()
+  },
+  write: async (successCallback, errorCallback, params) => {
+    try {
+      const message = params[0];
+
+      console.log('sending', message);
+	  
+      plugin.writer.writeString(message + '\n');
+      await plugin.writer.storeAsync();
+      successCallback()
+    } catch (e) {
+      errorCallback(e);
+    }
+  },
+  setSupportedCallback: successCallback => plugin.supportedCallback = successCallback,
+  setConnectedCallback: successCallback => plugin.connectedDeviceCallback = successCallback,
+  setDiscoveredCallback: successCallback => plugin.discoveredCallback = successCallback,
+  setDiscoveryCallback: successCallback => plugin.discoveringCallback = successCallback,
+  setMessageCallback: successCallback => plugin.messageCallback = successCallback,
+  setStateCallback: successCallback => plugin.stateCallback = successCallback,
+  setDiscoverableCallback: () => {},
+  setListeningCallback: () => {},
+});
