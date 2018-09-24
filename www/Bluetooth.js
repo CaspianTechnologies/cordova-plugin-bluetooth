@@ -31,7 +31,7 @@ function BluetoothServerSocket(serverSocketKey) {
   this.serverSocketKey = serverSocketKey || guid();
 }
 
-BluetoothServerSocket.prototype.start = function (iface, success, error) {
+BluetoothServerSocket.prototype.start = function (success, error) {
   success = success || (() => {});
   error = error || (() => {});
 
@@ -115,13 +115,13 @@ BluetoothServerSocket.prototype.start = function (iface, success, error) {
       },
       CORDOVA_SERVICE_NAME,
       "startServer",
-      [ this.serverSocketKey, iface ]
+      [ this.serverSocketKey ]
   );
 };
 
-BluetoothServerSocket.prototype.startAsync = function (iface) {
+BluetoothServerSocket.prototype.startAsync = function () {
     return new Promise((resolve, reject) => {
-        return this.start(iface, resolve, reject);
+        return this.start(resolve, reject);
     });
 };
 
@@ -222,7 +222,7 @@ BluetoothSocket.prototype.write = function (data, success, error) {
     }
 
     var dataToWrite = data instanceof Uint8Array
-        ? Socket._copyToArray(data)
+        ? BluetoothSocket._copyToArray(data)
         : data;
 
     exec(
@@ -271,7 +271,7 @@ BluetoothSocket.prototype.close = function (success, error) {
         return;
     }
 
-    this._state = Socket.State.CLOSING;
+    this._state = BluetoothSocket.State.CLOSING;
 
     exec(
         success,
@@ -354,6 +354,17 @@ BluetoothSocket._copyToArray = function (array) {
     return outputArray;
 };
 
+var devices = new Map();
+var previousDiscoveredDevices = new Map();
+var deviceDiscoveredCallback, deviceGoneCallback;
+exports.setDeviceDiscoveredCallback = function(callback) {
+    deviceDiscoveredCallback = callback;
+};
+
+exports.setDeviceGoneCallback = function(callback) {
+    deviceGoneCallback = callback;
+};
+
 var guid = (function () {
     function s4() {
         return Math.floor((1 + Math.random()) * 0x10000)
@@ -399,9 +410,6 @@ exports.getDiscoverable = function() {
   });
 };
 
-
-
-
 exports.requestEnable = function() {
     return new Promise(function(success,error) {
         exec(success, error, "Bluetooth", "requestEnable", []);
@@ -420,20 +428,87 @@ exports.disable = function() {
     });
 };
 
-exports.listPairedDevices = function() {
+var listPairedDevices = function() {
   return new Promise(function(success,error) {
     exec(success, error, "Bluetooth", "listPairedDevices", []);
   });
 };
 
-exports.startDiscovery = function() {
+var discoveryInProgress = false;
+var startDiscovery = function() {
   return new Promise(function(success,error) {
-    exec(success, error, "Bluetooth", "startDiscovery", []);
+  exec(
+      () => {
+          discoveryInProgress = true;
+
+          listPairedDevices().then(function(pairedDevices) {
+            pairedDevices.forEach(function(device) {
+                if (deviceDiscoveredCallback && !devices.has(device.address) && !previousDiscoveredDevices.has(device.address)) {
+                    devices.set(device.address, device);
+                    deviceDiscoveredCallback({
+                      address: device.address,
+                      name: device.name,
+                      paired: true
+                    });
+                }
+            });
+          });
+
+          setDiscoveryCallback(function(result){ if(!result && discoveryInProgress) {
+                previousDiscoveredDevices.forEach(function(device) {
+                    if(devices.has(device.address))
+                        return;
+
+                    if(deviceGoneCallback) {
+                        deviceGoneCallback({
+                            address: device.address,
+                            name: device.name
+                        });
+                    }
+                });
+
+                previousDiscoveredDevices = new Map(devices);
+                devices.clear();
+                startDiscovery();
+            }
+          });
+
+          setDiscoveredCallback(function(device) {
+            if (devices.has(device.address)) {
+                const registeredDevice = devices.get(device.address);
+                registeredDevice.name = device.name;
+                return;
+            }
+
+
+
+            devices.set(device.address, device);
+
+            if (deviceDiscoveredCallback && !previousDiscoveredDevices.has(device.address)) {
+                deviceDiscoveredCallback({
+                  address: device.address,
+                  name: device.name,
+                  paired: false
+                });
+              }
+          });
+
+          success();
+      },
+      (errorMessage) => {
+        discoveryInProgress = false;
+        error(errorMessage);
+      },
+      CORDOVA_SERVICE_NAME,
+      "startDiscovery",
+      []
+    );
   });
 };
 
-exports.cancelDiscovery = function() {
+var cancelDiscovery = function() {
   return new Promise(function(success,error) {
+    discoveryInProgress = false;
     exec(success, error, "Bluetooth", "cancelDiscovery", []);
   });
 };
@@ -456,35 +531,27 @@ exports.disconnect = function() {
 	});
 };
 
-exports.write = function(data) {
-	return new Promise(function(success,error) {
-		exec(success, error, "Bluetooth", "write", [data]);
-	});
-};
-
-
-
 exports.setDiscoverableCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setDiscoverableCallback", []);
 };
 
-exports.setDiscoveredCallback = function(callback) {
+var setDiscoveredCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setDiscoveredCallback", []);
 };
 
-exports.setDiscoveryCallback = function(callback) {
+var setDiscoveryCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setDiscoveryCallback", []);
 };
-
 
 exports.setSupportedCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setSupportedCallback", []);
 };
 
-exports.setStateCallback = function(callback) {
-  exec(callback, null, "Bluetooth", "setStateCallback", []);
-};
-
 exports.BluetoothSocket = BluetoothSocket;
 exports.BluetoothServerSocket = BluetoothServerSocket;
+exports.setDiscoveryCallback = setDiscoveryCallback;
+exports.startDiscovery = startDiscovery;
+exports.setDiscoveredCallback = setDiscoveredCallback;
+exports.cancelDiscovery = cancelDiscovery;
+exports.listPairedDevices = listPairedDevices;
 module.exports = exports;
