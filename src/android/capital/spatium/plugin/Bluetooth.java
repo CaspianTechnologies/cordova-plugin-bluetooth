@@ -1,14 +1,14 @@
 package capital.spatium.plugin;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.PluginResult;
 import org.apache.cordova.CallbackContext;
@@ -56,6 +56,8 @@ public class Bluetooth extends CordovaPlugin {
   private BroadcastReceiver mDiscoveredReceiver = null;
   private BroadcastReceiver mStateReceiver = null;
 
+  private final int INPUT_STREAM_BUFFER_SIZE = 16 * 1024;
+
   @Override
   public void initialize(CordovaInterface cordova, CordovaWebView webView) {
     super.initialize(cordova, webView);
@@ -93,9 +95,6 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("getState".equals(action)) {
       getState(callbackContext);
       return true;
-    } else if ("getDiscoverable".equals(action)) {
-      getDiscoverable(callbackContext);
-      return true;
     } else if ("requestEnable".equals(action)) {
       requestEnable(callbackContext);
       return true;
@@ -117,7 +116,7 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("enableDiscovery".equals(action)) {
       enableDiscovery(callbackContext);
       return true;
-    } else if ("stopListening".equals(action)) {
+    } else if ("stopServer".equals(action)) {
       stopServer(args, callbackContext);
       return true;
     } else if ("setDiscoverableCallback".equals(action)) {
@@ -129,9 +128,6 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("setDiscoveryCallback".equals(action)) {
       setDiscoveryCallback(callbackContext);
       return true;
-    } else if ("setStateCallback".equals(action)) {
-      setStateCallback(callbackContext);
-      return true;
     } else if ("setSupportedCallback".equals(action)) {
       // We do not support tracking BT support on android yet
       return true;
@@ -142,7 +138,7 @@ public class Bluetooth extends CordovaPlugin {
     else if ("startServer".equals(action)) {
       this.startServer(args, callbackContext);
       return true;
-    } else if ("disconnect".equals(action)) {
+    } else if ("close".equals(action)) {
       disconnect(args, callbackContext);
       return true;
     } else if ("write".equals(action)) {
@@ -394,6 +390,7 @@ public class Bluetooth extends CordovaPlugin {
               } catch (Exception ignored) { }
             }
           }
+
         }
       };
       IntentFilter filter = new IntentFilter();
@@ -541,16 +538,23 @@ public class Bluetooth extends CordovaPlugin {
       public void run() {
         try {
           BluetoothSocket socket = bluetoothSockets.get(socketKey);
-          BufferedReader mBufferedReader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
 
           while (bluetoothSockets.containsKey(socketKey)) {
-            String string = mBufferedReader.readLine();
 
-            JSONObject event = new JSONObject();
-            event.put("type", "DataReceived");
-            event.put("data", string);
-            event.put("socketKey", socketKey);
-            dispatchEvent(event);
+            byte[] buffer = new byte[INPUT_STREAM_BUFFER_SIZE];
+            int bytesRead = 0;
+
+            while ((bytesRead = socket.getInputStream().read(buffer)) >= 0) {
+              byte[] data = buffer.length == bytesRead
+                      ? buffer
+                      : Arrays.copyOfRange(buffer, 0, bytesRead);
+
+              JSONObject event = new JSONObject();
+              event.put("type", "DataReceived");
+              event.put("data", new JSONArray(toByteList(data)));
+              event.put("socketKey", socketKey);
+              dispatchEvent(event);
+            }
           }
         } catch (Exception e) {
           try {
@@ -589,15 +593,16 @@ public class Bluetooth extends CordovaPlugin {
       return;
     }
 
-    PrintWriter mPrintWriter = null;
+    DataOutputStream mPrintWriter = null;
     try {
-      mPrintWriter = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
+      mPrintWriter = new DataOutputStream(socket.getOutputStream());
     } catch (IOException e) {
       callbackContext.error("Not connected");
     }
 
     try {
-        mPrintWriter.println(data);
+        mPrintWriter.write(dataBuffer);
+        mPrintWriter.flush();
         callbackContext.success();
     } catch (Exception e) {
       callbackContext.error("Disconnected");
@@ -665,5 +670,13 @@ public class Bluetooth extends CordovaPlugin {
         webView.loadUrl(String.format("javascript:cordova.plugins.bluetooth.BluetoothServerSocket.dispatchEvent(%s);", jsonEventObject.toString()));
       }
     });
+  }
+
+  private List<Byte> toByteList(byte[] array) {
+    List<Byte> byteList = new ArrayList<Byte>(array.length);
+    for (byte anArray : array) {
+      byteList.add(anArray);
+    }
+    return byteList;
   }
 }
