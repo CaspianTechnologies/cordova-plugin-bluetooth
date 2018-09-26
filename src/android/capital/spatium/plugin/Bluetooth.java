@@ -128,6 +128,9 @@ public class Bluetooth extends CordovaPlugin {
     } else if ("setDiscoveryCallback".equals(action)) {
       setDiscoveryCallback(callbackContext);
       return true;
+    } else if ("setStateCallback".equals(action)) {
+      setStateCallback(callbackContext);
+      return true;
     } else if ("setSupportedCallback".equals(action)) {
       // We do not support tracking BT support on android yet
       return true;

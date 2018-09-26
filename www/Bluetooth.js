@@ -547,6 +547,10 @@ exports.setSupportedCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setSupportedCallback", []);
 };
 
+exports.setStateCallback = function(callback) {
+    exec(callback, null, "Bluetooth", "setStateCallback", []);
+};
+
 exports.BluetoothSocket = BluetoothSocket;
 exports.BluetoothServerSocket = BluetoothServerSocket;
 exports.setDiscoveryCallback = setDiscoveryCallback;
