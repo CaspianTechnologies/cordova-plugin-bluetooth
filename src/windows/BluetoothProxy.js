@@ -22,6 +22,7 @@ const plugin = (() => {
   let _supportedCallback = null;
   let _stateCallback = null;
   let _discoveringCallback = null;
+  let _discoveringInternalCallback = null;
   let _discoveredCallback = null;
 
   return {
@@ -66,6 +67,9 @@ const plugin = (() => {
       if (_discoveringCallback) {
         _discoveringCallback(_discovering, { keepCallback: true });
       }
+      if (_discoveringInternalCallback) {
+        _discoveringInternalCallback(_discovering, { keepCallback: true });
+      }
     },
     // device discovered
     discovered: (device) => {
@@ -81,6 +85,9 @@ const plugin = (() => {
     },
     set discoveringCallback(callback) {
       _discoveringCallback = callback;
+    },
+    set discoveringInternalCallback(callback) {
+      _discoveringInternalCallback = callback;
     },
 
     set discoveredCallback(callback) {
@@ -528,6 +535,7 @@ cordova.commandProxy.add("Bluetooth", {
   setSupportedCallback: successCallback => plugin.supportedCallback = successCallback,
   setDiscoveredCallback: successCallback => plugin.discoveredCallback = successCallback,
   setDiscoveryCallback: successCallback => plugin.discoveringCallback = successCallback,
+  setInternalDiscoveryCallback: successCallback => plugin.discoveringInternalCallback = successCallback,
   setStateCallback: successCallback => plugin.stateCallback = successCallback,
   setDiscoverableCallback: () => {},
   setListeningCallback: () => {},

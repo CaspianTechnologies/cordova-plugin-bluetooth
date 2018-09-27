@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,6 +48,7 @@ public class Bluetooth extends CordovaPlugin {
   private CallbackContext mStateCallback = null;
   private CallbackContext mDiscoveredCallback = null;
   private CallbackContext mDiscoveryCallback = null;
+  private CallbackContext mInternalDiscoveryCallback = null;
   private CallbackContext mDiscoverableCallback = null;
 
   private static final int REQUEST_PERMISSION_BT = 4;
@@ -63,6 +65,8 @@ public class Bluetooth extends CordovaPlugin {
     super.initialize(cordova, webView);
 
     mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+    registerStateReceiver();
+    registerDiscoveryReceiver();
   }
 
   @Override
@@ -127,6 +131,9 @@ public class Bluetooth extends CordovaPlugin {
       return true;
     } else if ("setDiscoveryCallback".equals(action)) {
       setDiscoveryCallback(callbackContext);
+      return true;
+    } else if ("setInternalDiscoveryCallback".equals(action)) {
+      setInternalDiscoveryCallback(callbackContext);
       return true;
     } else if ("setStateCallback".equals(action)) {
       setStateCallback(callbackContext);
@@ -196,61 +203,43 @@ public class Bluetooth extends CordovaPlugin {
       return;
     }
 
-    cordova.getThreadPool().execute(new Runnable() {
-      public void run() {
-        try {
-          BluetoothServerSocket mBluetoothServerSocket = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Spatium wallet", UUID.fromString("995f40e0-ce68-4d24-8f68-f49d2b9d661f"));
-          bluetoothServerSockets.put(serverSocketKey, mBluetoothServerSocket);
-
-          while(bluetoothServerSockets.containsKey(serverSocketKey)) {
-            BluetoothSocket socket = mBluetoothServerSocket.accept();
-            BluetoothSocket mBluetoothSocket = bluetoothSockets.get(serverSocketKey);
-
-            String socketKey = UUID.randomUUID().toString();
-            if (!bluetoothSockets.containsKey(socketKey)) {
-              mBluetoothSocket = socket;
-              bluetoothSockets.put(socketKey, socket);
-            } else {
-              socket.close();
-            }
-
-            if (mBluetoothSocket != null) {
-              BluetoothDevice device = mBluetoothSocket.getRemoteDevice();
-
-
-              JSONObject event = new JSONObject();
-              event.put("type", "Connected");
-              event.put("name", device.getName());
-              event.put("address", device.getAddress());
-              event.put("socketKey", socketKey);
-              event.put("serverSocketKey", serverSocketKey);
-              dispatchServerEvent(event);
-              startReading(socketKey, callbackContext);
-            }
-          }
-        } catch (Exception e) {
-          try {
-            JSONObject event = new JSONObject();
-            event.put("type", "Stopped");
-            event.put("serverSocketKey", serverSocketKey);
-            dispatchServerEvent(event);
-          } catch (Exception ignored) {}
-
-          callbackContext.error("Listening failed");
-        } finally {
-          BluetoothServerSocket mBluetoothServerSocket = bluetoothServerSockets.get(serverSocketKey);
-          if (bluetoothServerSockets.containsKey(serverSocketKey)) {
-            try {
-              mBluetoothServerSocket.close();
-            } catch (Exception ignored) {}
-
-            bluetoothServerSockets.remove(serverSocketKey);
-          }
-        }
-      }
-    });
+    cordova.getThreadPool().execute(new ServerSocketAcceptTask(serverSocketKey, callbackContext));
 
     callbackContext.success();
+  }
+
+  private void startServerSocket(String serverSocketKey) throws IOException, JSONException {
+    if(bluetoothServerSockets.containsKey(serverSocketKey))
+      return;
+
+    BluetoothServerSocket mBluetoothServerSocket = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Spatium wallet", UUID.fromString("995f40e0-ce68-4d24-8f68-f49d2b9d661f"));
+    bluetoothServerSockets.put(serverSocketKey, mBluetoothServerSocket);
+
+    while(bluetoothServerSockets.containsKey(serverSocketKey)) {
+      BluetoothSocket socket = mBluetoothServerSocket.accept();
+      BluetoothSocket mBluetoothSocket = bluetoothSockets.get(serverSocketKey);
+
+      String socketKey = UUID.randomUUID().toString();
+      if (!bluetoothSockets.containsKey(socketKey)) {
+        mBluetoothSocket = socket;
+        bluetoothSockets.put(socketKey, socket);
+      } else {
+        socket.close();
+      }
+
+      if (mBluetoothSocket != null) {
+        BluetoothDevice device = mBluetoothSocket.getRemoteDevice();
+
+        JSONObject event = new JSONObject();
+        event.put("type", "Connected");
+        event.put("name", device.getName());
+        event.put("address", device.getAddress());
+        event.put("socketKey", socketKey);
+        event.put("serverSocketKey", serverSocketKey);
+        dispatchServerEvent(event);
+        startReading(socketKey);
+      }
+    }
   }
 
   private void stopServer(CordovaArgs args, final CallbackContext callbackContext) throws JSONException {
@@ -302,6 +291,9 @@ public class Bluetooth extends CordovaPlugin {
 
   private void setStateCallback(CallbackContext callbackContext) {
     mStateCallback = callbackContext;
+  }
+
+  private void registerStateReceiver() {
     if(mStateReceiver == null) {
       mStateReceiver = new BroadcastReceiver() {
         @Override
@@ -314,14 +306,22 @@ public class Bluetooth extends CordovaPlugin {
               result.setKeepCallback(true);
               mStateCallback.sendPluginResult(result);
             }
+
+            if(state == BluetoothAdapter.STATE_ON && !bluetoothServerSockets.isEmpty()) {
+                for(String socketKey : new HashSet<>(bluetoothServerSockets.keySet())) {
+                    System.out.println(socketKey);
+                    bluetoothServerSockets.remove(socketKey);
+                    cordova.getThreadPool().execute(new ServerSocketAcceptTask(socketKey, null));
+                }
+            }
           }
         }
       };
       webView.getContext().registerReceiver(mStateReceiver, new IntentFilter(ACTION_STATE_CHANGED));
     }
   }
-  private void setDiscoveryCallback(CallbackContext callbackContext) {
-    mDiscoveryCallback = callbackContext;
+
+  private void registerDiscoveryReceiver() {
     if(mDiscoveryReceiver == null) {
       mDiscoveryReceiver = new BroadcastReceiver() {
         @Override
@@ -333,11 +333,21 @@ public class Bluetooth extends CordovaPlugin {
               result.setKeepCallback(true);
               mDiscoveryCallback.sendPluginResult(result);
             }
+            if(mInternalDiscoveryCallback != null) {
+              PluginResult result = new PluginResult(PluginResult.Status.OK, true);
+              result.setKeepCallback(true);
+              mInternalDiscoveryCallback.sendPluginResult(result);
+            }
           } else if (ACTION_DISCOVERY_FINISHED.equals(action)) {
             if(mDiscoveryCallback != null) {
               PluginResult result = new PluginResult(PluginResult.Status.OK, false);
               result.setKeepCallback(true);
               mDiscoveryCallback.sendPluginResult(result);
+            }
+            if(mInternalDiscoveryCallback != null) {
+              PluginResult result = new PluginResult(PluginResult.Status.OK, false);
+              result.setKeepCallback(true);
+              mInternalDiscoveryCallback.sendPluginResult(result);
             }
           }
         }
@@ -347,6 +357,16 @@ public class Bluetooth extends CordovaPlugin {
       filter.addAction(ACTION_DISCOVERY_FINISHED);
       webView.getContext().registerReceiver(mDiscoveryReceiver, filter);
     }
+  }
+
+
+  private void setInternalDiscoveryCallback(CallbackContext callbackContext) {
+    mInternalDiscoveryCallback = callbackContext;
+  }
+
+
+  private void setDiscoveryCallback(CallbackContext callbackContext) {
+    mDiscoveryCallback = callbackContext;
   }
 
   private void setDiscoverableCallback(CallbackContext callbackContext) {
@@ -492,7 +512,7 @@ public class Bluetooth extends CordovaPlugin {
             event.put("address", targetDevice.getAddress());
             event.put("socketKey", socketKey);
             dispatchEvent(event);
-            startReading(socketKey, callbackContext);
+            startReading(socketKey);
             callbackContext.success();
           } else {
             callbackContext.error("Failed to conect: interrupted");
@@ -529,11 +549,9 @@ public class Bluetooth extends CordovaPlugin {
     callbackContext.success();
   }
 
-
-  private void startReading(String socketKey, final CallbackContext callbackContext) {
+  private void startReading(String socketKey) {
 
     if(!this.bluetoothSockets.containsKey(socketKey)) {
-      callbackContext.error("Not connected");
       return;
     }
 
@@ -576,8 +594,6 @@ public class Bluetooth extends CordovaPlugin {
         }
       }
     });
-
-    callbackContext.success();
   }
 
   private void write(CordovaArgs args, final CallbackContext callbackContext) throws JSONException {
@@ -681,5 +697,52 @@ public class Bluetooth extends CordovaPlugin {
       byteList.add(anArray);
     }
     return byteList;
+  }
+
+  public class ServerSocketAcceptTask implements Runnable {
+    private String serverSocketKey;
+    private CallbackContext callbackContext;
+
+    public ServerSocketAcceptTask(String serverSocketKey, CallbackContext callbackContext) {
+      this.serverSocketKey = serverSocketKey;
+      this.callbackContext = callbackContext;
+    }
+
+    @Override
+    public void run() {
+      try {
+          BluetoothServerSocket mBluetoothServerSocket = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Spatium wallet", UUID.fromString("995f40e0-ce68-4d24-8f68-f49d2b9d661f"));
+          bluetoothServerSockets.put(serverSocketKey, mBluetoothServerSocket);
+
+          while(bluetoothServerSockets.containsKey(serverSocketKey)) {
+            BluetoothSocket socket = mBluetoothServerSocket.accept();
+            BluetoothSocket mBluetoothSocket = bluetoothSockets.get(serverSocketKey);
+
+            String socketKey = UUID.randomUUID().toString();
+            if (!bluetoothSockets.containsKey(socketKey)) {
+              mBluetoothSocket = socket;
+              bluetoothSockets.put(socketKey, socket);
+            } else {
+              socket.close();
+            }
+
+            if (mBluetoothSocket != null) {
+              BluetoothDevice device = mBluetoothSocket.getRemoteDevice();
+
+              JSONObject event = new JSONObject();
+              event.put("type", "Connected");
+              event.put("name", device.getName());
+              event.put("address", device.getAddress());
+              event.put("socketKey", socketKey);
+              event.put("serverSocketKey", serverSocketKey);
+              dispatchServerEvent(event);
+              startReading(socketKey);
+            }
+          }
+      } catch (Exception e) {
+        if(callbackContext != null)
+          callbackContext.error("Listening failed");
+      }
+    }
   }
 }
