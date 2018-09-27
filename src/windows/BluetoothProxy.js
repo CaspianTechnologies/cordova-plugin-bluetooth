@@ -18,16 +18,10 @@ const plugin = (() => {
   let _supported = false;
   let _state = false;
   let _discovering = false;
-  let _reading = false;
-
-  let _connectedDevice = null;
 
   let _supportedCallback = null;
   let _stateCallback = null;
   let _discoveringCallback = null;
-  let _readingCallback = null;
-  let _messageCallback = null;
-  let _connectedDeviceCallback = null;
   let _discoveredCallback = null;
 
   return {
@@ -59,20 +53,6 @@ const plugin = (() => {
         _stateCallback(_state, { keepCallback: true });
       }
     },
-    // connected control
-    get connectedDevice() {
-      return _connectedDevice;
-    },
-    set connectedDevice(value) {
-      if (value === _connectedDevice) {
-        return;
-      }
-
-      _connectedDevice = value;
-      if (_connectedDeviceCallback) {
-        _connectedDeviceCallback(_connectedDevice, { keepCallback: true });
-      }
-    },
     // discovering control
     get discovering() {
       return _discovering;
@@ -87,30 +67,10 @@ const plugin = (() => {
         _discoveringCallback(_discovering, { keepCallback: true });
       }
     },
-    // reading control
-    get reading() {
-      return _reading;
-    },
-    set reading(value) {
-      if (value === _reading) {
-        return;
-      }
-
-      _reading = value;
-      if (_readingCallback) {
-        _readingCallback(_reading, { keepCallback: true });
-      }
-    },
     // device discovered
     discovered: (device) => {
       if (_discoveredCallback) {
         _discoveredCallback(device, { keepCallback: true });
-      }
-    },
-    // message received
-    message: (message) => {
-      if (_messageCallback) {
-        _messageCallback(message, { keepCallback: true });
       }
     },
     set supportedCallback(callback) {
@@ -122,22 +82,15 @@ const plugin = (() => {
     set discoveringCallback(callback) {
       _discoveringCallback = callback;
     },
-    set readingCallback(callback) {
-      _readingCallback = callback;
-    },
-    set messageCallback(callback) {
-      _messageCallback = callback;
-    },
-    set connectedDeviceCallback(callback) {
-      _connectedDeviceCallback = callback;
-    },
+
     set discoveredCallback(callback) {
       _discoveredCallback = callback;
     },
     // uncontrolled data
-    socket: null,
-    service: null,
-    writer: null,
+    sockets: [],
+    services: [],
+    writers: [],
+    connectedDevices: [],
     watcher: null,
     adapter: null
   }
@@ -158,17 +111,17 @@ function stateHandler(state) {
 }
 
 async function refreshAdapterState() {
-	const adapter = await getBluetoothAdapterAsync();
+  const adapter = await getBluetoothAdapterAsync();
 
   if (adapter && !plugin.adapter) {
     plugin.adapter = adapter;
-	plugin.supported = true;
+  plugin.supported = true;
     plugin.adapter.addEventListener('statechanged', stateHandler);
     plugin.state = StateMap[plugin.adapter.state];
   } else if (!adapter && plugin.adapter) {
     plugin.adapter.removeEventListener('statechanged', stateHandler);
     plugin.adapter = null;
-	plugin.supported = false;
+  plugin.supported = false;
     plugin.state = ANDROID_STATE_OFF;
   }
 }
@@ -218,25 +171,23 @@ plugin.watcher = setupDiscoveryWatcher(devInfo => {
   plugin.discovering = false;
 });
 
-async function loadMessageAsync(reader) {
-  const BYTES_TO_READ = 1;
+async function loadMessageAsync(reader, socketKey) {
+  const INPUT_STREAM_BUFFER_SIZE = 16 * 1024;
 
-  let message = '';
-  let bytesRead = 0;
-  let char = null;
+  let result = [];
+  let buffer = new Windows.Storage.Streams.Buffer(INPUT_STREAM_BUFFER_SIZE);
+  let data = null;
+
   do {
-    bytesRead = await reader.loadAsync(BYTES_TO_READ);
-    if (bytesRead < BYTES_TO_READ) {
-      throw new Error('Client disconnected');
-    }
+    let currentSocket = plugin.sockets[socketKey];
+    data = await currentSocket.inputStream.readAsync(buffer, INPUT_STREAM_BUFFER_SIZE, Windows.Storage.Streams.InputStreamOptions.partial);
+    var dataReader = Windows.Storage.Streams.DataReader.fromBuffer(data);
+    let dataArray = new Array(data.length);
+    dataReader.readBytes(dataArray);
+    result = result.concat(dataArray);
+  } while (data.length == INPUT_STREAM_BUFFER_SIZE);
 
-    char = reader.readString(bytesRead);
-    if (char !== '\n') {
-      message += char;
-    }
-  } while (char !== '\n');
-
-  return message;
+  return result;
 }
 
 async function findServiceAsync(id) {
@@ -304,6 +255,81 @@ async function connectToServiceAsync(service) {
   return socket;
 }
 
+function dispatchEvent(event) {
+  cordova.plugins.bluetooth.BluetoothSocket.dispatchEvent(event);
+}
+
+function dispatchCloseEvent(socketKey) {
+  const event = {
+      type: "Close",
+      socketKey: socketKey
+  };
+  dispatchEvent(event);
+}
+
+function dispatchConnectedEvent(socketKey) {
+  const event = {
+      type: "Connected",
+      name: "",
+      address: "",
+      socketKey: socketKey,
+  };
+  dispatchEvent(event);
+}
+
+function dispatchDataReceivedEvent(socketKey, data) {
+  const event = {
+      type: "DataReceived",
+      data: data,
+      socketKey: socketKey,
+  };
+  dispatchEvent(event);
+}
+
+async function readSocket(socketKey, successCallback, errorCallback) {
+  if (!plugin.sockets[socketKey]) {
+      errorCallback("Not connected");
+      return;
+  }
+
+  let reader = null;
+  successCallback();
+
+  try {
+    reader = new Windows.Storage.Streams.DataReader(plugin.sockets[socketKey].inputStream);
+
+    do {
+      const message = await loadMessageAsync(reader, socketKey);
+      dispatchDataReceivedEvent(socketKey, message);
+    } while (plugin.sockets[socketKey] !== null);
+  } catch (e) {
+    dispatchCloseEvent(socketKey);
+    closeSocket(socketKey);
+    errorCallback(e);
+  } finally {
+    reader.detachStream();
+  }
+}
+
+function closeSocket(socketKey, successCallback, errorCallback) {
+  plugin.connectedDevices[socketKey] = null;
+  try {
+    if (plugin.writers[socketKey]) {
+      plugin.writers[socketKey].detachStream();
+      plugin.writers[socketKey] = null;
+    }
+
+    if (plugin.sockets[socketKey]) {
+      plugin.sockets[socketKey].close();
+      plugin.sockets[socketKey] = null;
+    }
+    this.dispatchCloseEvent(socketKey);
+    successCallback();
+  } catch (e) {
+    errorCallback(e);
+  }
+}
+
 cordova.commandProxy.add("Bluetooth", {
   getSupported: async (successCallback, errorCallback) => {
     try {
@@ -327,12 +353,6 @@ cordova.commandProxy.add("Bluetooth", {
   },
   getDiscoverable: (successCallback, errorCallback) => {
     successCallback(false);
-  },
-  getListening: (successCallback, errorCallback) => {
-    successCallback(false);
-  },
-  getConnected: (successCallback) => {
-    successCallback(!!plugin.connectedDevice)
   },
   requestEnable: (successCallback, errorCallback) => {
     try {
@@ -415,13 +435,16 @@ cordova.commandProxy.add("Bluetooth", {
   enableDiscovery: (successCallback, errorCallback) => {
     errorCallback('Discoverable mode is not supported');
   },
-  startListening: (successCallback, errorCallback) => {
+  startServer: (successCallback, errorCallback) => {
     errorCallback('Listening mode is not supported');
   },
-  stopListening: (successCallback, errorCallback) => {
+  stopServer: (successCallback, errorCallback) => {
     errorCallback('Listening mode is not supported');
   },
-  connect: async (successCallback, errorCallback, params) => {
+  open: async (successCallback, errorCallback, params) => {
+    const socketKey = params[0];
+    const deviceAddress = params[1];
+
     try {
       const adapter = await getBluetoothAdapterAsync();
 
@@ -430,27 +453,26 @@ cordova.commandProxy.add("Bluetooth", {
         return;
       }
 
-      if (plugin.connectedDevice) {
+      if (plugin.connectedDevices[socketKey]) {
         errorCallback("Already connected");
         return;
       }
 
-      const device = params[0];
-
-      plugin.service = await findServiceAsync(device.address);
-      if (plugin.service) {
-        plugin.socket = await connectToServiceAsync(plugin.service);
-        plugin.writer = new Windows.Storage.Streams.DataWriter(plugin.socket.outputStream);
-        plugin.connectedDevice = device;
-
+      plugin.services[socketKey] = await findServiceAsync(deviceAddress);
+      if (plugin.services[socketKey]) {
+        plugin.sockets[socketKey] = await connectToServiceAsync(plugin.services[socketKey]);
+        plugin.writers[socketKey] = new Windows.Storage.Streams.DataWriter(plugin.sockets[socketKey].outputStream);
+        plugin.connectedDevices[socketKey] = deviceAddress;
+        dispatchConnectedEvent(socketKey);
+        readSocket(socketKey, () => { }, () => { });
         successCallback();
         return;
       }
 
-      const bluetoothDevice = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(device.address);
+      const bluetoothDevice = await Windows.Devices.Bluetooth.BluetoothDevice.fromIdAsync(deviceAddress);
 
       if (!bluetoothDevice) {
-        errorCallback('Failed to find a device with id: ' + device.address);
+        errorCallback('Failed to find a device with id: ' + deviceAddress);
         return;
       }
 
@@ -461,104 +483,51 @@ cordova.commandProxy.add("Bluetooth", {
         return;
       }
 
-      plugin.service = await findServiceAsync(device.address);
-      if (plugin.service) {
-        plugin.socket = await connectToServiceAsync(plugin.service);
-        plugin.writer = new Windows.Storage.Streams.DataWriter(plugin.socket.outputStream);
-        plugin.connectedDevice = device;
-
+      plugin.services[socketKey] = await findServiceAsync(deviceAddress);
+      if (plugin.services[socketKey]) {
+        plugin.sockets[socketKey] = await connectToServiceAsync(plugin.services[socketKey]);
+        plugin.writers[socketKey] = new Windows.Storage.Streams.DataWriter(plugin.sockets[socketKey].outputStream);
+        plugin.connectedDevices[socketKey] = deviceAddress;
+        dispatchConnectedEvent(socketKey);
+        readSocket(socketKey, () => {}, () => {});
         successCallback();
         return;
       }
 
       errorCallback('Failed to pair and then connect');
     } catch (e) {
-      if (plugin.writer) {
-        plugin.writer.detachStream();
-        plugin.writer = null;
+      if (plugin.writers[socketKey]) {
+        plugin.writers[socketKey].detachStream();
+        plugin.writers[socketKey] = null;
       }
 
-      if (plugin.socket) {
-        plugin.socket.close();
-        plugin.socket = null;
+      if (plugin.sockets[socketKey]) {
+        plugin.sockets[socketKey].close();
+        plugin.sockets[socketKey] = null;
+        dispatchCloseEvent(socketKey);
       }
       errorCallback(e);
     }
   },
-  disconnect: (successCallback, errorCallback) => {
-    plugin.connectedDevice = null;
-    try {
-      if (plugin.writer) {
-        plugin.writer.detachStream();
-        plugin.writer = null;
-      }
-
-      if (plugin.socket) {
-        plugin.socket.close();
-        plugin.socket = null;
-      }
-      successCallback();
-    } catch (e) {
-      errorCallback(e);
-    }
-  },
-  startReading: async (successCallback, errorCallback) => {
-    if (!plugin.socket) {
-      errorCallback("Not connected");
-      return;
-    }
-
-	let reader = null;
-	
-    try {
-      plugin.reading = true;
-
-      successCallback();
-
-	  reader = new Windows.Storage.Streams.DataReader(plugin.socket.inputStream)
-	  
-      do {
-        const message = await loadMessageAsync(reader);
-        plugin.message(message);
-      } while (plugin.reading);
-    } catch (e) {
-      disconnect();
-
-      errorCallback(e);
-    } finally {
-      reader.detachStream();
-      plugin.reading = false;
-    }
-  },
-  getReading: (successCallback) => {
-    successCallback(plugin.reading)
-  },
-  stopReading: function (successCallback, errorCallback) {
-    if (!plugin.reading) {
-      errorCallback("Not reading");
-      return;
-    }
-
-    plugin.reading = false;
-
-    successCallback()
+  close: (successCallback, errorCallback, params) => {
+    const socketKey = params[0];
+    closeSocket(socketKey, successCallback, errorCallback);
   },
   write: async (successCallback, errorCallback, params) => {
     try {
-      const message = params[0];
-	  
-      plugin.writer.writeString(message + '\n');
-      await plugin.writer.storeAsync();
+      const socketKey = params[0];
+      const data = params[1];
+
+      plugin.writers[socketKey].writeBytes(data);
+      await plugin.writers[socketKey].storeAsync();
       successCallback()
     } catch (e) {
       errorCallback(e);
     }
   },
   setSupportedCallback: successCallback => plugin.supportedCallback = successCallback,
-  setConnectedCallback: successCallback => plugin.connectedDeviceCallback = successCallback,
   setDiscoveredCallback: successCallback => plugin.discoveredCallback = successCallback,
   setDiscoveryCallback: successCallback => plugin.discoveringCallback = successCallback,
-  setMessageCallback: successCallback => plugin.messageCallback = successCallback,
   setStateCallback: successCallback => plugin.stateCallback = successCallback,
   setDiscoverableCallback: () => {},
   setListeningCallback: () => {},
