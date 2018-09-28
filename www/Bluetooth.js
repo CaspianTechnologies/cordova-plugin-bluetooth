@@ -454,7 +454,7 @@ var startDiscovery = function() {
             });
           });
 
-          setDiscoveryCallback(function(result){ if(!result && discoveryInProgress) {
+          setInternalDiscoveryCallback(function(result){ if(!result && discoveryInProgress) {
                 previousDiscoveredDevices.forEach(function(device) {
                     if(devices.has(device.address))
                         return;
@@ -469,7 +469,7 @@ var startDiscovery = function() {
 
                 previousDiscoveredDevices = new Map(devices);
                 devices.clear();
-                startDiscovery();
+                startDiscovery(success, error);
             }
           });
 
@@ -541,6 +541,10 @@ var setDiscoveredCallback = function(callback) {
 
 var setDiscoveryCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setDiscoveryCallback", []);
+};
+
+var setInternalDiscoveryCallback = function(callback) {
+  exec(callback, null, "Bluetooth", "setInternalDiscoveryCallback", []);
 };
 
 exports.setSupportedCallback = function(callback) {
