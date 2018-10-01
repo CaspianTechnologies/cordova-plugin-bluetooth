@@ -99,7 +99,8 @@ const plugin = (() => {
     writers: [],
     connectedDevices: [],
     watcher: null,
-    adapter: null
+    adapter: null,
+    discoveryStarted: false
   }
 })();
 
@@ -113,12 +114,18 @@ async function getBluetoothAdapterAsync() {
 }
 
 function stateHandler(state) {
-  console.log(state, plugin.adapter.state);
   plugin.state = StateMap[plugin.adapter.state];
 }
 
 async function refreshAdapterState() {
   const adapter = await getBluetoothAdapterAsync();
+
+  try {
+    if (!plugin.discovering && adapter && adapter.state === Windows.Devices.Radios.RadioState.on && plugin.discoveryStarted && plugin.watcher.status !== 1) {
+      plugin.watcher.start();
+      plugin.discovering = true;
+    }
+  } catch (e) {}
 
   if (adapter && !plugin.adapter) {
     plugin.adapter = adapter;
@@ -389,11 +396,6 @@ cordova.commandProxy.add("Bluetooth", {
     try {
       const adapter = await getBluetoothAdapterAsync();
 
-      if (!adapter || !adapter.state === Windows.Devices.Radios.RadioState.on) {
-        errorCallback("Bluetooth is not enabled");
-        return;
-      }
-
       const devices = await listPairedDevicesAsync();
 
       successCallback(devices);
@@ -401,7 +403,11 @@ cordova.commandProxy.add("Bluetooth", {
       errorCallback(e);
     }
   },
-  startDiscovery: async (successCallback, errorCallback) => {
+    startDiscovery: async (successCallback, errorCallback) => {
+        if (plugin.discoveryStarted && !plugin.discovering) {
+            successCallback();
+            return;
+        }
     if (plugin.discovering) {
       errorCallback("Already discovering");
       return;
@@ -409,13 +415,9 @@ cordova.commandProxy.add("Bluetooth", {
 
     try {
       plugin.discovering = true;
+      plugin.discoveryStarted = true;
 
       const adapter = await getBluetoothAdapterAsync();
-
-      if (!adapter || !adapter.state === Windows.Devices.Radios.RadioState.on) {
-        errorCallback("Bluetooth is not enabled");
-        return;
-      }
 
       plugin.watcher.start();
 
@@ -432,6 +434,7 @@ cordova.commandProxy.add("Bluetooth", {
     }
 
     try {
+      plugin.discoveryStarted = false;
       plugin.watcher.stop();
 
       successCallback()
