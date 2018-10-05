@@ -435,52 +435,87 @@ var listPairedDevices = function() {
 };
 
 var discoveryInProgress = false;
+var state = 12;
 var startDiscovery = function() {
   return new Promise(function(success,error) {
   exec(
       () => {
           discoveryInProgress = true;
 
-          listPairedDevices().then(function(pairedDevices) {
-            pairedDevices.forEach(function(device) {
-                if (deviceDiscoveredCallback && !devices.has(device.address) && !previousDiscoveredDevices.has(device.address)) {
+          setInternalStateCallback(function (newState) {
+            if (newState == 10) {
+              devices.clear();
+              previousDiscoveredDevices.clear();
+            }
+
+            if (newState == 12) {
+              listPairedDevices().then(function (pairedDevices) {
+                pairedDevices.forEach(function (device) {
+                    if (deviceDiscoveredCallback && !devices.has(device.address) && !previousDiscoveredDevices.has(device.address)) {
                     devices.set(device.address, device);
                     deviceDiscoveredCallback({
-                      address: device.address,
-                      name: device.name,
-                      paired: true
+                        address: device.address,
+                        name: device.name,
+                        paired: true
                     });
-                }
+                    }
+                });
+              });
+            }
+            state = newState;
+          });
+
+          listPairedDevices().then(function(pairedDevices) {
+            pairedDevices.forEach(function (device) {
+              if (state == 12 && deviceDiscoveredCallback && !devices.has(device.address) && !previousDiscoveredDevices.has(device.address)) {
+                devices.set(device.address, device);
+                deviceDiscoveredCallback({
+                  address: device.address,
+                  name: device.name,
+                  paired: true
+                });
+              }
             });
           });
 
-          setInternalDiscoveryCallback(function(result){ if(!result && discoveryInProgress) {
-                previousDiscoveredDevices.forEach(function(device) {
-                    if(devices.has(device.address))
-                        return;
+          setInternalDiscoveryCallback(function (result) {
+            if (!result && discoveryInProgress) {
+              previousDiscoveredDevices.forEach(function(device) {
+                if(devices.has(device.address))
+                  return;
 
-                    if(deviceGoneCallback) {
-                        deviceGoneCallback({
-                            address: device.address,
-                            name: device.name
-                        });
-                    }
-                });
+                if(deviceGoneCallback) {
+                  deviceGoneCallback({
+                    address: device.address,
+                    name: device.name
+                  });
+                }
+              });
 
-                previousDiscoveredDevices = new Map(devices);
-                devices.clear();
-                startDiscovery(success, error);
+              previousDiscoveredDevices = new Map(devices);
+              devices.clear();
+              startDiscovery(success, error);
             }
           });
 
           setDiscoveredCallback(function(device) {
             if (devices.has(device.address)) {
-                const registeredDevice = devices.get(device.address);
-                registeredDevice.name = device.name;
-                return;
+
+              deviceGoneCallback({
+                address: device.address,
+                name: device.name
+              });
+
+              const registeredDevice = devices.get(device.address);
+              registeredDevice.name = device.name;
+
+              deviceDiscoveredCallback({
+                address: device.address,
+                name: device.name,
+                paired: false
+              });
+              return;
             }
-
-
 
             devices.set(device.address, device);
 
@@ -551,9 +586,19 @@ exports.setSupportedCallback = function(callback) {
   exec(callback, null, "Bluetooth", "setSupportedCallback", []);
 };
 
-exports.setStateCallback = function(callback) {
-    exec(callback, null, "Bluetooth", "setStateCallback", []);
+var internalStateCallback = () => { };
+var stateCallback = () => { };
+
+var setStateCallback = function (callback) {
+  stateCallback = callback;
+  exec(function (result) { internalStateCallback(result); stateCallback(result); }, null, "Bluetooth", "setStateCallback", []);
 };
+
+var setInternalStateCallback = function (callback) {
+  internalStateCallback = callback;
+  exec(function (result) { internalStateCallback(result); stateCallback(result); }, null, "Bluetooth", "setStateCallback", []);
+};
+
 
 exports.BluetoothSocket = BluetoothSocket;
 exports.BluetoothServerSocket = BluetoothServerSocket;
@@ -562,4 +607,5 @@ exports.startDiscovery = startDiscovery;
 exports.setDiscoveredCallback = setDiscoveredCallback;
 exports.cancelDiscovery = cancelDiscovery;
 exports.listPairedDevices = listPairedDevices;
+exports.setStateCallback = setStateCallback;
 module.exports = exports;

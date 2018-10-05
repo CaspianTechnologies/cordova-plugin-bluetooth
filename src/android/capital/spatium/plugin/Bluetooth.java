@@ -58,6 +58,7 @@ public class Bluetooth extends CordovaPlugin {
   private BroadcastReceiver mDiscoveredReceiver = null;
   private BroadcastReceiver mStateReceiver = null;
 
+  private boolean mDiscoveryStarted = false;
   private final int INPUT_STREAM_BUFFER_SIZE = 16 * 1024;
 
   @Override
@@ -314,6 +315,10 @@ public class Bluetooth extends CordovaPlugin {
                     cordova.getThreadPool().execute(new ServerSocketAcceptTask(socketKey, null));
                 }
             }
+
+            if(state == BluetoothAdapter.STATE_ON && mDiscoveryStarted) {
+              startDiscovery(null);
+            }
           }
         }
       };
@@ -423,10 +428,7 @@ public class Bluetooth extends CordovaPlugin {
   }
 
   private void startDiscovery(final CallbackContext callbackContext) {
-    if(mBluetoothAdapter == null || !mBluetoothAdapter.isEnabled()) {
-      callbackContext.error("Bluetooth is not enabled");
-      return;
-    }
+    mDiscoveryStarted = true;
 
     try {
       if(!cordova.hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
@@ -434,14 +436,19 @@ public class Bluetooth extends CordovaPlugin {
       } else {
         mBluetoothAdapter.startDiscovery();
       }
-      callbackContext.success();
+
+      if(callbackContext != null)
+        callbackContext.success();
     } catch (Exception e) {
-      callbackContext.error("Failed to start discovery");
+
+      if(callbackContext != null)
+        callbackContext.error("Failed to start discovery");
     }
   }
 
   private void cancelDiscovery(final CallbackContext callbackContext) {
     try {
+      mDiscoveryStarted = false;
       mBluetoothAdapter.cancelDiscovery();
       callbackContext.success();
     } catch (Exception ignored) {
