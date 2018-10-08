@@ -199,7 +199,7 @@ async function loadMessageAsync(reader, socketKey) {
     let dataArray = new Array(data.length);
     dataReader.readBytes(dataArray);
     result = result.concat(dataArray);
-  } while (data.length == INPUT_STREAM_BUFFER_SIZE);
+  } while (data.length === INPUT_STREAM_BUFFER_SIZE);
 
   return result;
 }
@@ -233,6 +233,9 @@ async function listServicesAsync() {
 }
 
 async function listPairedDevicesAsync() {
+  if (!plugin.adapter || plugin.adapter.state !== Windows.Devices.Radios.RadioState.on) {
+    return [];
+  }
   const devices = await Windows.Devices.Enumeration.DeviceInformation.findAllAsync(
     Windows.Devices.Bluetooth.BluetoothDevice.getDeviceSelector(),
     null
@@ -359,7 +362,7 @@ cordova.commandProxy.add("Bluetooth", {
       if (adapter) {
         successCallback(StateMap[adapter.state]);
       } else {
-        errorCallback('Bluetooth is not supported');
+        successCallback(StateMap[Windows.Devices.Radios.RadioState.unknown]);
       }
     } catch (e) {
       errorCallback(e);
