@@ -2,6 +2,8 @@
   "name": "cordova-plugin-bluetooth",
   "version": "0.11.0",
   "description": "A bluetooth-classic cordova plugin",
+  "author": "Caspian Technologies PTE. LTD.",
+  "license": "gpl-3.0",
   "cordova": {
     "id": "cordova-plugin-bluetooth",
     "platforms": [
