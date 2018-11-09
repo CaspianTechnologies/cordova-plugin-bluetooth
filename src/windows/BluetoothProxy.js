@@ -205,20 +205,18 @@ async function loadMessageAsync(reader, socketKey) {
 }
 
 async function findServiceAsync(id) {
-  for (var i = 0; i <= 15; i++) {
-    let service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(id);
-    if (!service) {
-      const services = await listServicesAsync();
-      const matching = services.filter(service => {
-        return service.id.toLowerCase().indexOf(id.toLowerCase()) !== -1;
-      });
+  let service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(id);
+  if (!service) {
+    const services = await listServicesAsync();
+    const matching = services.filter(service => {
+      return service.id.toLowerCase().indexOf(id.toLowerCase()) !== -1;
+    });
 
-      if (matching.length > 0) {
-        service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(matching[0].id);
-      }
+    if (matching.length > 0) {
+      service = await Windows.Devices.Bluetooth.Rfcomm.RfcommDeviceService.fromIdAsync(matching[0].id);
     }
   }
-  return null;
+  return service;
 }
 
 async function findDeviceAsync(id) {
@@ -507,9 +505,6 @@ cordova.commandProxy.add("Bluetooth", {
         readSocket(socketKey, () => {}, () => {});
         successCallback();
         return;
-      }
-      else {
-        await bluetoothDevice.deviceInformation.pairing.unpairAsync();
       }
 
       errorCallback('Failed to pair and then connect');
